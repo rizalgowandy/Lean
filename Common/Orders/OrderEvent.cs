@@ -96,6 +96,13 @@ namespace QuantConnect.Orders
         public bool IsAssignment { get; set; }
 
         /// <summary>
+        /// Order Event empty constructor required for json converter
+        /// </summary>
+        public OrderEvent()
+        {
+        }
+
+        /// <summary>
         /// Order Event Constructor.
         /// </summary>
         /// <param name="orderId">Id of the parent order</param>
