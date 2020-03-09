@@ -53,14 +53,18 @@ namespace QuantConnect.Report
 
             // Parse content from source files into result objects
             Log.Trace($"QuantConnect.Report.Main(): Parsing source files...{backtestDataFile}, {liveDataFile}");
-            var backtest = JsonConvert.DeserializeObject<BacktestResult>(File.ReadAllText(backtestDataFile));
+            var backtest = JsonConvert.DeserializeObject<BacktestResult>(File.ReadAllText(backtestDataFile),
+                // DeserializeObject does not use DefaultSettings, we need to specify the converter
+                new OrderJsonConverter());
 
             LiveResult live = null;
             if (liveDataFile != string.Empty)
             {
                 live = JsonConvert.DeserializeObject<LiveResult>(File.ReadAllText(liveDataFile), new JsonSerializerSettings
                 {
-                    NullValueHandling = NullValueHandling.Ignore
+                    NullValueHandling = NullValueHandling.Ignore,
+                    // DeserializeObject does not use DefaultSettings, we need to specify the converter
+                    Converters = { new OrderJsonConverter() }
                 });
             }
 
