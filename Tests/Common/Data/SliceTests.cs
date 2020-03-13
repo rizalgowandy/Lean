@@ -53,6 +53,28 @@ namespace QuantConnect.Tests.Common.Data
         }
 
         [Test]
+        public void EquitiesIgnoreQuoteBars()
+        {
+            var quoteBar = new QuoteBar { Symbol = Symbols.SPY, Time = DateTime.Now };
+            var slice = new Slice(DateTime.Now, new[] { quoteBar });
+
+            Assert.IsFalse(slice.HasData);
+            Assert.IsTrue(slice.ToList().Count == 0);
+            Assert.IsFalse(slice.ContainsKey(Symbols.SPY));
+            Assert.Throws<KeyNotFoundException>(() => { var data = slice[Symbols.SPY]; } );
+            Assert.AreEqual(0, slice.Count);
+
+            var tickQuoteBar = new Tick { Symbol = Symbols.SPY, Time = DateTime.Now, TickType = TickType.Quote};
+            slice = new Slice(DateTime.Now, new[] { tickQuoteBar });
+
+            Assert.IsFalse(slice.HasData);
+            Assert.IsTrue(slice.ToList().Count == 0);
+            Assert.IsFalse(slice.ContainsKey(Symbols.SPY));
+            Assert.Throws<KeyNotFoundException>(() => { var data = slice[Symbols.SPY]; });
+            Assert.AreEqual(0, slice.Count);
+        }
+
+        [Test]
         public void AccessesTradeBarCollection()
         {
             TradeBar tradeBar1 = new TradeBar { Symbol = Symbols.SPY, Time = DateTime.Now };
