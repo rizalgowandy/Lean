@@ -44,7 +44,7 @@ namespace QuantConnect.Tests.Common.Data
         [Test]
         public void AccessesTradeBarBySymbol()
         {
-            TradeBar tradeBar = new TradeBar {Symbol = Symbols.SPY, Time = DateTime.Now};
+            TradeBar tradeBar = new TradeBar { Symbol = Symbols.SPY, Time = DateTime.Now };
             Slice slice = new Slice(DateTime.Now, new[] { tradeBar });
 
             TradeBar data = slice[tradeBar.Symbol];
@@ -66,8 +66,8 @@ namespace QuantConnect.Tests.Common.Data
         [Test]
         public void AccessesTicksBySymbol()
         {
-            Tick tick1 = new Tick(DateTime.Now, Symbols.SPY, 1, 2);
-            Tick tick2 = new Tick(DateTime.Now, Symbols.SPY, 1.1m, 2.1m);
+            Tick tick1 = new Tick { Time = DateTime.Now, Symbol = Symbols.SPY, Value = 1m, Quantity = 2m };
+            Tick tick2 = new Tick { Time = DateTime.Now, Symbol = Symbols.SPY, Value = 1.1m, Quantity = 2.1m };
             Slice slice = new Slice(DateTime.Now, new[] { tick1, tick2 });
 
             List<Tick> data = slice[tick1.Symbol];
@@ -78,10 +78,10 @@ namespace QuantConnect.Tests.Common.Data
         [Test]
         public void AccessesTicksCollection()
         {
-            Tick tick1 = new Tick(DateTime.Now, Symbols.SPY, 1, 2);
-            Tick tick2 = new Tick(DateTime.Now, Symbols.SPY, 1.1m, 2.1m);
-            Tick tick3 = new Tick(DateTime.Now, Symbols.AAPL, 1, 2);
-            Tick tick4 = new Tick(DateTime.Now, Symbols.AAPL, 1.1m, 2.1m);
+            Tick tick1 = new Tick { Time = DateTime.Now, Symbol = Symbols.SPY, Value = 1, Quantity = 2 };
+            Tick tick2 = new Tick { Time = DateTime.Now, Symbol = Symbols.SPY, Value = 1.1m, Quantity = 2.1m };
+            Tick tick3 = new Tick { Time = DateTime.Now, Symbol = Symbols.AAPL, Value = 1, Quantity = 2 };
+            Tick tick4 = new Tick { Time = DateTime.Now, Symbol = Symbols.AAPL, Value = 1.1m, Quantity = 2.1m };
             Slice slice = new Slice(DateTime.Now, new[] { tick1, tick2, tick3, tick4 });
 
             Ticks ticks = slice.Ticks;
@@ -149,7 +149,7 @@ from QuantConnect.Data.Custom import *
 def Test(slice):
     data = slice.Get(Quandl)
     return data").GetAttr("Test");
-                var quandlSpy = new Quandl { Symbol = Symbols.SPY, Time = DateTime.Now, Value = 10};
+                var quandlSpy = new Quandl { Symbol = Symbols.SPY, Time = DateTime.Now, Value = 10 };
                 var quandlAapl = new Quandl { Symbol = Symbols.AAPL, Time = DateTime.Now, Value = 11 };
                 var slice = new Slice(DateTime.Now, new[] { quandlSpy, quandlAapl });
 
@@ -388,10 +388,10 @@ def Test(slice):
         {
             var slice = new Slice(DateTime.Now, new[]
             {
-                new Tick(DateTime.Now, Symbols.SPY, 1, 2),
-                new Tick(DateTime.Now, Symbols.SPY, 1.1m, 2.1m),
-                new Tick(DateTime.Now, Symbols.AAPL, 1, 2),
-                new Tick(DateTime.Now, Symbols.AAPL, 1.1m, 2.1m)
+                new Tick {Time = DateTime.Now, Symbol = Symbols.SPY, Value = 1, Quantity = 2},
+                new Tick{Time = DateTime.Now, Symbol = Symbols.SPY, Value = 1.1m, Quantity = 2.1m},
+                new Tick{Time = DateTime.Now, Symbol = Symbols.AAPL, Value = 1, Quantity = 2},
+                new Tick{Time = DateTime.Now, Symbol = Symbols.AAPL, Value = 1.1m, Quantity = 2.1m}
             });
 
             Assert.AreEqual(4, slice.Count());
