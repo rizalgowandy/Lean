@@ -127,7 +127,8 @@ namespace QuantConnect.Algorithm.CSharp
             {"Tracking Error", "0.209"},
             {"Treynor Ratio", "-1.514"},
             {"Total Fees", "$17.19"},
-            {"Estimated Strategy Capacity", "$560000000.00"},
+            {"Estimated Strategy Capacity", "$640000000.00"},
+            {"Lowest Capacity Asset", "SPY R735QTJ8XC9X"},
             {"Fitness Score", "0.002"},
             {"Kelly Criterion Estimate", "12.812"},
             {"Kelly Criterion Probability Value", "0.363"},
@@ -140,14 +141,14 @@ namespace QuantConnect.Algorithm.CSharp
             {"Long Insight Count", "5"},
             {"Short Insight Count", "2"},
             {"Long/Short Ratio", "250.0%"},
-            {"Estimated Monthly Alpha Value", "$18576432.8867"},
-            {"Total Accumulated Estimated Alpha Value", "$3199274.5527"},
-            {"Mean Population Estimated Insight Value", "$799818.6382"},
+            {"Estimated Monthly Alpha Value", "$21484919.5759"},
+            {"Total Accumulated Estimated Alpha Value", "$3700180.5936"},
+            {"Mean Population Estimated Insight Value", "$925045.1484"},
             {"Mean Population Direction", "50%"},
             {"Mean Population Magnitude", "50%"},
             {"Rolling Averaged Population Direction", "50%"},
             {"Rolling Averaged Population Magnitude", "50%"},
-            {"OrderListHash", "657b9cb12ee7097df61fff5661192ccf"}
+            {"OrderListHash", "de18d7406b7b5126fcb974f9d283aca0"}
         };
     }
 }

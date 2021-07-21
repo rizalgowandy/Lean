@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -501,6 +501,58 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             Assert.AreEqual(_algorithm.OrderEvents.Count, 2);
             Assert.IsTrue(_algorithm.OrderEvents[0].Status == OrderStatus.Submitted);
             Assert.IsTrue(_algorithm.OrderEvents[1].Status == OrderStatus.UpdateSubmitted);
+        }
+
+        [Test]
+        public void UpdatePartiallyFilledOrderRequestShouldWork()
+        {
+            // Initializes the transaction handler
+            var transactionHandler = new TestBrokerageTransactionHandler();
+            using (var broker = new BacktestingBrokerage(_algorithm))
+            {
+                transactionHandler.Initialize(_algorithm, broker, new BacktestingResultHandler());
+
+                // Creates a limit order
+                var security = _algorithm.Securities[_symbol];
+                var originalFillModel = security.FillModel;
+                security.SetFillModel(new PartialFillModel(_algorithm, 0.5m));
+                var price = 1.12m;
+                security.SetMarketPrice(new Tick(DateTime.Now, security.Symbol, price, price, price));
+                var orderRequest = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, 1000, 0,
+                    1.11m, DateTime.Now, "");
+
+                // Mock the the order processor
+                var orderProcessorMock = new Mock<IOrderProcessor>();
+                orderProcessorMock.Setup(m => m.GetOrderTicket(It.IsAny<int>()))
+                    .Returns(new OrderTicket(_algorithm.Transactions, orderRequest));
+                _algorithm.Transactions.SetOrderProcessor(orderProcessorMock.Object);
+
+                // Submit and process a limit order
+                var orderTicket = transactionHandler.Process(orderRequest);
+                transactionHandler.HandleOrderRequest(orderRequest);
+                Assert.IsTrue(orderRequest.Response.IsProcessed);
+                Assert.IsTrue(orderRequest.Response.IsSuccess);
+                Assert.AreEqual(orderTicket.Status, OrderStatus.Submitted);
+
+                broker.Scan();
+                Assert.AreEqual(orderTicket.Status, OrderStatus.PartiallyFilled);
+
+                var updateRequest = new UpdateOrderRequest(DateTime.Now, orderTicket.OrderId, new UpdateOrderFields());
+                transactionHandler.Process(updateRequest);
+                Assert.AreEqual(updateRequest.Status, OrderRequestStatus.Processing);
+                Assert.IsTrue(updateRequest.Response.IsSuccess);
+                Assert.AreEqual(OrderStatus.PartiallyFilled, orderTicket.Status);
+
+                transactionHandler.HandleOrderRequest(updateRequest);
+                Assert.IsTrue(updateRequest.Response.IsSuccess);
+                Assert.AreEqual(OrderStatus.UpdateSubmitted, orderTicket.Status);
+
+                Assert.AreEqual(_algorithm.OrderEvents.Count, 3);
+                Assert.IsTrue(_algorithm.OrderEvents[0].Status == OrderStatus.Submitted);
+                Assert.IsTrue(_algorithm.OrderEvents[1].Status == OrderStatus.PartiallyFilled);
+                Assert.IsTrue(_algorithm.OrderEvents[2].Status == OrderStatus.UpdateSubmitted);
+                security.SetFillModel(originalFillModel);
+            }
         }
 
         [Test]
@@ -1084,6 +1136,32 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             Assert.AreEqual(10, TestIncrementalOrderIdAlgorithm.OrderEventIds.Count);
         }
 
+        [Test]
+        public void InvalidOrderEventDueToNonShortableAsset()
+        {
+            // Initializes the transaction handler
+            var transactionHandler = new TestBrokerageTransactionHandler();
+            var broker = new TestBroker(_algorithm, false);
+            _algorithm.SetBrokerageModel(new TestShortableBrokerageModel());
+            transactionHandler.Initialize(_algorithm, broker, new BacktestingResultHandler());
+
+            var security = _algorithm.Securities[_symbol];
+            var price = 1.12m;
+            security.SetMarketPrice(new Tick(DateTime.Now, security.Symbol, price, price, price));
+            var orderRequest = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, -1000, 0, 1.11m, DateTime.UtcNow, "");
+
+            // Mock the the order processor
+            var orderProcessorMock = new Mock<IOrderProcessor>();
+            orderProcessorMock.Setup(m => m.GetOrderTicket(It.IsAny<int>())).Returns(new OrderTicket(_algorithm.Transactions, orderRequest));
+            _algorithm.Transactions.SetOrderProcessor(orderProcessorMock.Object);
+
+            var orderTicket = transactionHandler.Process(orderRequest);
+            transactionHandler.HandleOrderRequest(orderRequest);
+            Assert.AreEqual(orderTicket.Status, OrderStatus.Invalid);
+            Assert.AreEqual(_algorithm.OrderEvents.Count, 1);
+            Assert.AreEqual(_algorithm.OrderEvents.Count(orderEvent => orderEvent.Status == OrderStatus.Invalid), 1);
+        }
+
         internal class TestIncrementalOrderIdAlgorithm : OrderTicketDemoAlgorithm
         {
             public static readonly Dictionary<int, int> OrderEventIds = new Dictionary<int, int>();
@@ -1198,6 +1276,25 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             public new void RoundOrderPrices(Order order, Security security)
             {
                 base.RoundOrderPrices(order, security);
+            }
+        }
+        private class TestNonShortableProvider : IShortableProvider
+        {
+            public Dictionary<Symbol, long> AllShortableSymbols(DateTime localTime)
+            {
+                return new Dictionary<Symbol, long>();
+            }
+            public long? ShortableQuantity(Symbol symbol, DateTime localTime)
+            {
+                return 0;
+            }
+        }
+
+        private class TestShortableBrokerageModel : DefaultBrokerageModel
+        {
+            public TestShortableBrokerageModel()
+            {
+                ShortableProvider = new TestNonShortableProvider();
             }
         }
     }

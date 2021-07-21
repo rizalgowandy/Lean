@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -25,6 +25,7 @@ using QuantConnect.Logging;
 using QuantConnect.Orders;
 using QuantConnect.Orders.Fees;
 using QuantConnect.Securities;
+using QuantConnect.Securities.Positions;
 using QuantConnect.Util;
 
 namespace QuantConnect.Lean.Engine.TransactionHandlers
@@ -274,6 +275,11 @@ namespace QuantConnect.Lean.Engine.TransactionHandlers
                 ticket.SetOrder(order);
                 _completeOrderTickets.TryAdd(ticket.OrderId, ticket);
                 _completeOrders.TryAdd(order.Id, order);
+
+                HandleOrderEvent(new OrderEvent(order,
+                    _algorithm.UtcTime,
+                    OrderFee.Zero,
+                    orderTag));
             }
             return ticket;
         }
@@ -575,8 +581,6 @@ namespace QuantConnect.Lean.Engine.TransactionHandlers
                 return;
             }
 
-            Log.Debug("BrokerageTransactionHandler.ProcessSynchronousEvents(): Enter");
-
             // check if the brokerage should perform cash sync now
             if (_brokerage.ShouldPerformCashSync(CurrentTimeUtc))
             {
@@ -597,12 +601,12 @@ namespace QuantConnect.Lean.Engine.TransactionHandlers
             const int maxOrdersToKeep = 10000;
             if (_completeOrders.Count < maxOrdersToKeep + 1)
             {
-                Log.Debug("BrokerageTransactionHandler.ProcessSynchronousEvents(): Exit");
                 return;
             }
 
-            int max = _completeOrders.Max(x => x.Key);
-            int lowestOrderIdToKeep = max - maxOrdersToKeep;
+            Log.Debug("BrokerageTransactionHandler.ProcessSynchronousEvents(): Start removing old orders...");
+            var max = _completeOrders.Max(x => x.Key);
+            var lowestOrderIdToKeep = max - maxOrdersToKeep;
             foreach (var item in _completeOrders.Where(x => x.Key <= lowestOrderIdToKeep))
             {
                 Order value;
@@ -611,7 +615,7 @@ namespace QuantConnect.Lean.Engine.TransactionHandlers
                 _completeOrderTickets.TryRemove(item.Key, out ticket);
             }
 
-            Log.Debug("BrokerageTransactionHandler.ProcessSynchronousEvents(): Exit");
+            Log.Debug($"BrokerageTransactionHandler.ProcessSynchronousEvents(): New order count {_completeOrders.Count}. Exit");
         }
 
         /// <summary>
@@ -723,8 +727,10 @@ namespace QuantConnect.Lean.Engine.TransactionHandlers
             HasSufficientBuyingPowerForOrderResult hasSufficientBuyingPowerResult;
             try
             {
-                hasSufficientBuyingPowerResult = security.BuyingPowerModel.HasSufficientBuyingPowerForOrder(
-                    new HasSufficientBuyingPowerForOrderParameters(_algorithm.Portfolio, security, order));
+                var group = _algorithm.Portfolio.Positions.CreatePositionGroup(order);
+                hasSufficientBuyingPowerResult = group.BuyingPowerModel.HasSufficientBuyingPowerForOrder(
+                    _algorithm.Portfolio, group, order
+                );
             }
             catch (Exception err)
             {
@@ -874,7 +880,6 @@ namespace QuantConnect.Lean.Engine.TransactionHandlers
         {
             return order.Status != OrderStatus.Filled
                 && order.Status != OrderStatus.Canceled
-                && order.Status != OrderStatus.PartiallyFilled
                 && order.Status != OrderStatus.Invalid;
         }
 

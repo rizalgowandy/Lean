@@ -28,8 +28,6 @@ using QuantConnect.ToolBox.CoinApiDataConverter;
 using QuantConnect.ToolBox.CryptoiqDownloader;
 using QuantConnect.ToolBox.DukascopyDownloader;
 using QuantConnect.ToolBox.EstimizeDataDownloader;
-using QuantConnect.ToolBox.FxcmDownloader;
-using QuantConnect.ToolBox.FxcmVolumeDownload;
 using QuantConnect.ToolBox.GDAXDownloader;
 using QuantConnect.ToolBox.IBDownloader;
 using QuantConnect.ToolBox.IEX;
@@ -50,6 +48,7 @@ using QuantConnect.Util;
 using QuantConnect.ToolBox.SmartInsider;
 using QuantConnect.ToolBox.TiingoNewsConverter;
 using QuantConnect.ToolBox.ZerodhaDownloader;
+using QuantConnect.ToolBox.AlphaVantageDownloader;
 
 namespace QuantConnect.ToolBox
 {
@@ -95,14 +94,6 @@ namespace QuantConnect.ToolBox
                     case "ddl":
                     case "dukascopydownloader":
                         DukascopyDownloaderProgram.DukascopyDownloader(tickers, resolution, fromDate, toDate);
-                        break;
-                    case "fdl":
-                    case "fxcmdownloader":
-                        FxcmDownloaderProgram.FxcmDownloader(tickers, resolution, fromDate, toDate);
-                        break;
-                    case "fvdl":
-                    case "fxcmvolumedownload":
-                        FxcmVolumeDownloadProgram.FxcmVolumeDownload(tickers, resolution, fromDate, toDate);
                         break;
                     case "ibdl":
                     case "ibdownloader":
@@ -176,7 +167,7 @@ namespace QuantConnect.ToolBox
                             fromDate,
                             toDate,
                             GetParameterOrExit(optionsObject, "destination-dir"),
-                            GetParameterOrExit(optionsObject, "api-key")
+                            GetParameterOrDefault(optionsObject, "api-key", string.Empty)
                         );
                         break;
 
@@ -194,6 +185,17 @@ namespace QuantConnect.ToolBox
                             resolution, 
                             fromDate, 
                             toDate);
+                        break;
+
+                    case "avdl":
+                    case "alphavantagedownloader":
+                        AlphaVantageDownloaderProgram.AlphaVantageDownloader(
+                            tickers,
+                            resolution,
+                            fromDate,
+                            toDate,
+                            GetParameterOrExit(optionsObject, "api-key")
+                        );
                         break;
 
                     default:
@@ -241,7 +243,7 @@ namespace QuantConnect.ToolBox
                         break;
                     case "cadc":
                     case "coinapidataconverter":
-                        CoinApiDataConverterProgram.CoinApiDataProgram(GetParameterOrExit(optionsObject, "date"), GetParameterOrExit(optionsObject, "market"),
+                        CoinApiDataConverterProgram.CoinApiDataProgram(GetParameterOrExit(optionsObject, "date"), 
                             GetParameterOrExit(optionsObject, "source-dir"), GetParameterOrExit(optionsObject, "destination-dir"));
                         break;
                     case "nmdc":

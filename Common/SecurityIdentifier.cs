@@ -40,7 +40,7 @@ namespace QuantConnect
     /// </remarks>
     [JsonConverter(typeof(SecurityIdentifierJsonConverter))]
     [ProtoContract(SkipConstructor = true)]
-    public class SecurityIdentifier : IEquatable<SecurityIdentifier>
+    public class SecurityIdentifier : IEquatable<SecurityIdentifier>, IComparable<SecurityIdentifier>, IComparable
     {
         #region Empty, DefaultDate Fields
 
@@ -649,48 +649,6 @@ namespace QuantConnect
         }
 
         /// <summary>
-        /// Converts an upper case alpha numeric string into a long
-        /// </summary>
-        private static ulong DecodeBase36(string symbol)
-        {
-            var result = 0ul;
-            var baseValue = 1ul;
-            for (var i = symbol.Length - 1; i > -1; i--)
-            {
-                var c = symbol[i];
-
-                // assumes alpha numeric upper case only strings
-                var value = (uint)(c <= 57
-                    ? c - '0'
-                    : c - 'A' + 10);
-
-                result += baseValue * value;
-                baseValue *= 36;
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Converts a long to an uppercase alpha numeric string
-        /// </summary>
-        private static string EncodeBase36(ulong data)
-        {
-            var stack = new Stack<char>(15);
-            while (data != 0)
-            {
-                var value = data % 36;
-                var c = value < 10
-                    ? (char)(value + '0')
-                    : (char)(value - 10 + 'A');
-
-                stack.Push(c);
-                data /= 36;
-            }
-            return new string(stack.ToArray());
-        }
-
-        /// <summary>
         /// The strike is normalized into deci-cents and then a scale factor
         /// is also saved to bring it back to un-normalized
         /// </summary>
@@ -847,7 +805,7 @@ namespace QuantConnect
 
                     var symbol = parts[0];
                     var otherData = parts[1];
-                    var props = DecodeBase36(otherData);
+                    var props = otherData.DecodeBase36();
 
                     // toss the previous in as the underlying, if Empty, ignored by ctor
                     identifier = new SecurityIdentifier(symbol, props, identifier);
@@ -884,6 +842,49 @@ namespace QuantConnect
         #endregion
 
         #region Equality members and ToString
+
+        /// <summary>Compares the current instance with another object of the same type and returns an integer that indicates whether the current instance precedes, follows, or occurs in the same position in the sort order as the other object. </summary>
+        /// <param name="other">An object to compare with this instance. </param>
+        /// <returns>A value that indicates the relative order of the objects being compared. The return value has these meanings: Value Meaning Less than zero This instance precedes <paramref name="other" /> in the sort order.  Zero This instance occurs in the same position in the sort order as <paramref name="other" />. Greater than zero This instance follows <paramref name="other" /> in the sort order. </returns>
+        public int CompareTo(SecurityIdentifier other)
+        {
+            if (ReferenceEquals(this, other))
+            {
+                return 0;
+            }
+
+            if (ReferenceEquals(null, other))
+            {
+                return 1;
+            }
+
+            return string.Compare(ToString(), other.ToString(), StringComparison.Ordinal);
+        }
+
+        /// <summary>Compares the current instance with another object of the same type and returns an integer that indicates whether the current instance precedes, follows, or occurs in the same position in the sort order as the other object.</summary>
+        /// <param name="obj">An object to compare with this instance. </param>
+        /// <returns>A value that indicates the relative order of the objects being compared. The return value has these meanings: Value Meaning Less than zero This instance precedes <paramref name="obj" /> in the sort order. Zero This instance occurs in the same position in the sort order as <paramref name="obj" />. Greater than zero This instance follows <paramref name="obj" /> in the sort order. </returns>
+        /// <exception cref="T:System.ArgumentException">
+        /// <paramref name="obj" /> is not the same type as this instance. </exception>
+        public int CompareTo(object obj)
+        {
+            if (ReferenceEquals(null, obj))
+            {
+                return 1;
+            }
+
+            if (ReferenceEquals(this, obj))
+            {
+                return 0;
+            }
+
+            if (!(obj is SecurityIdentifier))
+            {
+                throw new ArgumentException($"Object must be of type {nameof(SecurityIdentifier)}");
+            }
+
+            return CompareTo((SecurityIdentifier) obj);
+        }
 
         /// <summary>
         /// Indicates whether the current object is equal to another object of the same type.
@@ -957,10 +958,11 @@ namespace QuantConnect
         {
             if (_stringRep == null)
             {
-                var props = EncodeBase36(_properties);
+                var props = _properties.EncodeBase36();
                 props = props.Length == 0 ? "0" : props;
                 _stringRep = HasUnderlying ? $"{_symbol} {props}|{_underlying}" : $"{_symbol} {props}";
             }
+
             return _stringRep;
         }
 

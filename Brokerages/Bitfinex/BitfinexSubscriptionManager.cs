@@ -470,7 +470,8 @@ namespace QuantConnect.Brokerages.Bitfinex
                         return;
                     }
 
-                    channels.TryAdd(data.ChannelId, channel);
+                    // we need to update the channel on re subscription
+                    channels.AddOrUpdate(data.ChannelId, channel);
 
                     Log.Trace($"BitfinexSubscriptionManager.OnSubscribe(): Channel subscribed: Id:{data.ChannelId} {channel.Symbol}/{channel.Name}");
 
@@ -690,7 +691,7 @@ namespace QuantConnect.Brokerages.Bitfinex
         {
             try
             {
-                var time = Time.UnixMillisecondTimeStampToDateTime(double.Parse(entries[1], NumberStyles.Float, CultureInfo.InvariantCulture));
+                var time = Time.UnixMillisecondTimeStampToDateTime(decimal.Parse(entries[1], NumberStyles.Float, CultureInfo.InvariantCulture));
                 var amount = decimal.Parse(entries[2], NumberStyles.Float, CultureInfo.InvariantCulture);
                 var price = decimal.Parse(entries[3], NumberStyles.Float, CultureInfo.InvariantCulture);
 

@@ -119,15 +119,15 @@ namespace QuantConnect.Util
                             var tick = data as Tick;
                             if (tick == null)
                             {
-                                throw new ArgumentException("Cryto tick could not be created", nameof(data));
+                                throw new ArgumentException("Crypto tick could not be created", nameof(data));
                             }
                             if (tick.TickType == TickType.Trade)
                             {
-                                return ToCsv(milliseconds, tick.LastPrice, tick.Quantity);
+                                return ToCsv(milliseconds, tick.LastPrice, tick.Quantity, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.Quote)
                             {
-                                return ToCsv(milliseconds, tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize);
+                                return ToCsv(milliseconds, tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize, tick.Suspicious ? "1" : "0");
                             }
                             throw new ArgumentException("Cryto tick could not be created");
                         case Resolution.Second:
@@ -207,6 +207,10 @@ namespace QuantConnect.Util
                 case SecurityType.Index:
                     switch (resolution)
                     {
+                        case Resolution.Tick:
+                            var tick = (Tick) data;
+                            return ToCsv(milliseconds, tick.LastPrice, tick.Quantity, string.Empty, string.Empty, "0");
+                        case Resolution.Second:
                         case Resolution.Minute:
                             var bar = data as TradeBar;
                             if (bar == null)
@@ -214,10 +218,12 @@ namespace QuantConnect.Util
                                 throw new ArgumentException("Expected data of type 'TradeBar'", nameof(data));
                             }
                             return ToCsv(milliseconds, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume);
-
-                        default:
-                            throw new NotSupportedException("Index only supports writing minute data a this time.");
+                        case Resolution.Hour:
+                        case Resolution.Daily:
+                            var bigTradeBar = data as TradeBar;
+                            return ToCsv(longTime, bigTradeBar.Open, bigTradeBar.High, bigTradeBar.Low, bigTradeBar.Close, bigTradeBar.Volume);
                     }
+                    break;
 
                 case SecurityType.Option:
                 case SecurityType.IndexOption:
@@ -952,6 +958,74 @@ namespace QuantConnect.Util
         /// Parses file name into a <see cref="Security"/> and DateTime
         /// </summary>
         /// <param name="fileName">File name to be parsed</param>
+        /// <param name="securityType">The securityType as parsed from the fileName</param>
+        public static bool TryParseSecurityType(string fileName, out SecurityType securityType)
+        {
+            securityType = SecurityType.Base;
+
+            try
+            {
+                var info = SplitDataPath(fileName);
+
+                // find the securityType and parse it
+                var typeString = info.Find(x => SecurityTypeAsDataPath.Contains(x.ToLowerInvariant()));
+                securityType = ParseDataSecurityType(typeString);
+            }
+            catch (Exception e)
+            {
+                Log.Error($"LeanData.TryParsePath(): Error encountered while parsing the path {fileName}. Error: {e.GetBaseException()}");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Parses file name into a <see cref="Security"/> and DateTime
+        /// </summary>
+        /// <param name="filePath">File path to be parsed</param>
+        /// <param name="symbol">The symbol as parsed from the fileName</param>
+        /// <param name="date">Date of data in the file path. Only returned if the resolution is lower than Hourly</param>
+        /// <param name="resolution">The resolution of the symbol as parsed from the filePath</param>
+        /// <param name="tickType">The tick type</param>
+        /// <param name="dataType">The data type</param>
+        public static bool TryParsePath(string filePath, out Symbol symbol, out DateTime date,
+            out Resolution resolution, out TickType tickType, out Type dataType)
+        {
+            symbol = default;
+            tickType = default;
+            dataType = default;
+            date = default;
+            resolution = default;
+
+            try
+            {
+                if (!TryParsePath(filePath, out symbol, out date, out resolution))
+                {
+                    return false;
+                }
+
+                tickType = GetCommonTickType(symbol.SecurityType);
+                var fileName = Path.GetFileNameWithoutExtension(filePath);
+                if (fileName.Contains("_"))
+                {
+                    tickType = (TickType)Enum.Parse(typeof(TickType), fileName.Split('_')[1], true);
+                }
+
+                dataType = GetDataType(resolution, tickType);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug($"LeanData.TryParsePath(): Error encountered while parsing the path {filePath}. Error: {ex.GetBaseException()}");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Parses file name into a <see cref="Security"/> and DateTime
+        /// </summary>
+        /// <param name="fileName">File name to be parsed</param>
         /// <param name="symbol">The symbol as parsed from the fileName</param>
         /// <param name="date">Date of data in the file path. Only returned if the resolution is lower than Hourly</param>
         /// <param name="resolution">The resolution of the symbol as parsed from the filePath</param>
@@ -961,21 +1035,9 @@ namespace QuantConnect.Util
             resolution = Resolution.Daily;
             date = default(DateTime);
 
-            var pathSeparators = new[] { '/', '\\' };
-
             try
             {
-                // Removes file extension
-                fileName = fileName.Replace(fileName.GetExtension(), "");
-
-                // remove any relative file path
-                while (fileName.First() == '.' || pathSeparators.Any(x => x == fileName.First()))
-                {
-                    fileName = fileName.Remove(0, 1);
-                }
-
-                // split path into components
-                var info = fileName.Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries).ToList();
+                var info = SplitDataPath(fileName);
 
                 // find where the useful part of the path starts - i.e. the securityType
                 var startIndex = info.FindIndex(x => SecurityTypeAsDataPath.Contains(x.ToLowerInvariant()));
@@ -1033,11 +1095,28 @@ namespace QuantConnect.Util
             }
             catch (Exception ex)
             {
-                Log.Error($"LeanData.TryParsePath(): Error encountered while parsing the path {fileName}. Error: {ex.GetBaseException()}");
+                Log.Debug($"LeanData.TryParsePath(): Error encountered while parsing the path {fileName}. Error: {ex.GetBaseException()}");
                 return false;
             }
 
             return true;
+        }
+
+        private static List<string> SplitDataPath(string fileName)
+        {
+            var pathSeparators = new[] { '/', '\\' };
+
+            // Removes file extension
+            fileName = fileName.Replace(fileName.GetExtension(), string.Empty);
+
+            // remove any relative file path
+            while (fileName.First() == '.' || pathSeparators.Any(x => x == fileName.First()))
+            {
+                fileName = fileName.Remove(0, 1);
+            }
+
+            // split path into components
+            return fileName.Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries).ToList();
         }
     }
 }

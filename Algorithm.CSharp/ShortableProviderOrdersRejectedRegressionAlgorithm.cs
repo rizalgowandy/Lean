@@ -34,6 +34,7 @@ namespace QuantConnect.Algorithm.CSharp
         private readonly List<OrderTicket> _ordersAllowed = new List<OrderTicket>();
         private readonly List<OrderTicket> _ordersDenied = new List<OrderTicket>();
         private bool _initialize;
+        private OrderEvent _lastOrderEvent;
         private bool _invalidatedAllowedOrder;
         private bool _invalidatedNewOrderWithPortfolioHoldings;
 
@@ -125,10 +126,21 @@ namespace QuantConnect.Algorithm.CSharp
             }
         }
 
+        public override void OnOrderEvent(OrderEvent orderEvent)
+        {
+            _lastOrderEvent = orderEvent;
+        }
+
         private void HandleOrder(OrderTicket orderTicket)
         {
             if (orderTicket.SubmitRequest.Status == OrderRequestStatus.Error)
             {
+                if (_lastOrderEvent == null || _lastOrderEvent.Status != OrderStatus.Invalid)
+                {
+                    throw new Exception($"Expected order event with invalid status for ticket {orderTicket}");
+                }
+
+                _lastOrderEvent = null;
                 _ordersDenied.Add(orderTicket);
                 return;
             }
@@ -169,12 +181,12 @@ namespace QuantConnect.Algorithm.CSharp
             {"Total Trades", "2"},
             {"Average Win", "0%"},
             {"Average Loss", "0%"},
-            {"Compounding Annual Return", "-1.673%"},
+            {"Compounding Annual Return", "-1.623%"},
             {"Drawdown", "0.100%"},
             {"Expectancy", "0"},
-            {"Net Profit", "-0.035%"},
-            {"Sharpe Ratio", "-1.746"},
-            {"Probabilistic Sharpe Ratio", "35.739%"},
+            {"Net Profit", "-0.034%"},
+            {"Sharpe Ratio", "-1.756"},
+            {"Probabilistic Sharpe Ratio", "35.690%"},
             {"Loss Rate", "0%"},
             {"Win Rate", "0%"},
             {"Profit-Loss Ratio", "0"},
@@ -182,16 +194,17 @@ namespace QuantConnect.Algorithm.CSharp
             {"Beta", "-0.022"},
             {"Annual Standard Deviation", "0.005"},
             {"Annual Variance", "0"},
-            {"Information Ratio", "-2.546"},
-            {"Tracking Error", "0.219"},
-            {"Treynor Ratio", "0.373"},
+            {"Information Ratio", "-2.547"},
+            {"Tracking Error", "0.218"},
+            {"Treynor Ratio", "0.376"},
             {"Total Fees", "$10.01"},
-            {"Estimated Strategy Capacity", "$84000000.00"},
+            {"Estimated Strategy Capacity", "$99000000.00"},
+            {"Lowest Capacity Asset", "AIG R735QTJ8XC9X"},
             {"Fitness Score", "0"},
             {"Kelly Criterion Estimate", "0"},
             {"Kelly Criterion Probability Value", "0"},
-            {"Sortino Ratio", "-4.875"},
-            {"Return Over Maximum Drawdown", "-21.808"},
+            {"Sortino Ratio", "-4.826"},
+            {"Return Over Maximum Drawdown", "-21.709"},
             {"Portfolio Turnover", "0.003"},
             {"Total Insights Generated", "0"},
             {"Total Insights Closed", "0"},
@@ -206,7 +219,7 @@ namespace QuantConnect.Algorithm.CSharp
             {"Mean Population Magnitude", "0%"},
             {"Rolling Averaged Population Direction", "0%"},
             {"Rolling Averaged Population Magnitude", "0%"},
-            {"OrderListHash", "8bba08ad8e5e3b0094852e396ccc7d19"}
+            {"OrderListHash", "3ac2d7a61f71c1345eb569e30cc2834c"}
         };
     }
 }

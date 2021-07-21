@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -77,8 +77,8 @@ namespace QuantConnect.Tests.Common.Securities
             // this test asserts the portfolio behaves according to the Test_Cash algo, see TestData\CashTestingStrategy.csv
             // also "https://www.dropbox.com/s/oiliumoyqqj1ovl/2013-cash.csv?dl=1"
 
-            const string fillsFile = "TestData\\test_cash_fills.xml";
-            const string equityFile = "TestData\\test_cash_equity.xml";
+            const string fillsFile = "TestData/test_cash_fills.xml";
+            const string equityFile = "TestData/test_cash_equity.xml";
 
             var fills = XDocument.Load(fillsFile).Descendants("OrderEvent").Select(x => new OrderEvent(
                 x.Get<int>("OrderId"),
@@ -140,10 +140,10 @@ namespace QuantConnect.Tests.Common.Securities
             // this test asserts the portfolio behaves according to the Test_Cash algo, but for a Forex security,
             // see TestData\CashTestingStrategy.csv; also "https://www.dropbox.com/s/oiliumoyqqj1ovl/2013-cash.csv?dl=1"
 
-            const string fillsFile = "TestData\\test_forex_fills.xml";
-            const string equityFile = "TestData\\test_forex_equity.xml";
-            const string mchQuantityFile = "TestData\\test_forex_fills_mch_quantity.xml";
-            const string jwbQuantityFile = "TestData\\test_forex_fills_jwb_quantity.xml";
+            const string fillsFile = "TestData/test_forex_fills.xml";
+            const string equityFile = "TestData/test_forex_equity.xml";
+            const string mchQuantityFile = "TestData/test_forex_fills_mch_quantity.xml";
+            const string jwbQuantityFile = "TestData/test_forex_fills_jwb_quantity.xml";
 
             var fills = XDocument.Load(fillsFile).Descendants("OrderEvent").Select(x => new OrderEvent(
                 x.Get<int>("OrderId"),
@@ -242,11 +242,6 @@ namespace QuantConnect.Tests.Common.Securities
                 Assert.AreEqual((double)mchJwb, (double)(mchUsd*usdJwb), 1e-10);
                 //Console.WriteLine("Step: " + i + " -- MCHJWB: " + mchJwb);
 
-
-                jwbCash.Update(new IndicatorDataPoint(MCHJWB, time, mchJwb));
-                usdCash.Update(new IndicatorDataPoint(MCHUSD, time, mchUsd));
-                mchCash.Update(new IndicatorDataPoint(JWBUSD, time, usdJwb));
-
                 var updateData = new Dictionary<Security, BaseData>
                 {
                     {mchJwbSecurity, new IndicatorDataPoint(MCHJWB, time, mchJwb)},
@@ -258,6 +253,10 @@ namespace QuantConnect.Tests.Common.Securities
                 {
                     kvp.Key.SetMarketPrice(kvp.Value);
                 }
+
+                jwbCash.Update();
+                usdCash.Update();
+                mchCash.Update();
 
                 portfolio.ProcessFill(fill);
                 //Console.WriteLine("-----------------------");
@@ -312,7 +311,7 @@ namespace QuantConnect.Tests.Common.Securities
             security.SetMarketPrice(new TradeBar(time, Symbols.AAPL, buyPrice, buyPrice, buyPrice, buyPrice, 1));
 
             var order = new MarketOrder(Symbols.AAPL, quantity, time) {Price = buyPrice};
-            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity };
+            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity, Status = OrderStatus.Filled};
             orderProcessor.AddOrder(order);
             var request = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, order.Quantity, 0, 0, order.Time, null);
             request.SetOrderId(0);
@@ -396,7 +395,7 @@ namespace QuantConnect.Tests.Common.Securities
             security.SetMarketPrice(new TradeBar(time, Symbols.AAPL, buyPrice, buyPrice, buyPrice, buyPrice, 1));
 
             var order = new MarketOrder(Symbols.AAPL, quantity, time) { Price = buyPrice };
-            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity };
+            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity, Status = OrderStatus.Filled };
             orderProcessor.AddOrder(order);
             var request = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, order.Quantity, 0, 0, order.Time, null);
             request.SetOrderId(0);
@@ -457,7 +456,7 @@ namespace QuantConnect.Tests.Common.Securities
             security.SetMarketPrice(new TradeBar(time, Symbols.AAPL, buyPrice, buyPrice, buyPrice, buyPrice, 1));
 
             var order = new MarketOrder(Symbols.AAPL, quantity, time) { Price = buyPrice };
-            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity };
+            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity, Status = OrderStatus.Filled };
             orderProcessor.AddOrder(order);
             var request = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, order.Quantity, 0, 0, order.Time, null);
             request.SetOrderId(0);
@@ -547,7 +546,7 @@ namespace QuantConnect.Tests.Common.Securities
             security.SetMarketPrice(new TradeBar(time, Symbols.AAPL, buyPrice, buyPrice, buyPrice, buyPrice, 1));
 
             var order = new MarketOrder(Symbols.AAPL, quantity, time) { Price = buyPrice };
-            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity };
+            var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero) { FillPrice = buyPrice, FillQuantity = quantity, Status = OrderStatus.Filled };
             orderProcessor.AddOrder(order);
             var request = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, order.Quantity, 0, 0, order.Time, null);
             request.SetOrderId(0);
@@ -1104,7 +1103,7 @@ namespace QuantConnect.Tests.Common.Securities
 
             var order = new MarketOrder(Symbols.AAPL, quantity, time) { Price = buyPrice };
             var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
-                { FillPrice = buyPrice, FillQuantity = quantity };
+                { FillPrice = buyPrice, FillQuantity = quantity, Status = OrderStatus.Filled };
             orderProcessor.AddOrder(order);
             var request = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, order.Quantity, 0, 0, order.Time, null);
             request.SetOrderId(0);
@@ -1173,7 +1172,7 @@ namespace QuantConnect.Tests.Common.Securities
 
             var order = new MarketOrder(Symbols.AAPL, -quantity, time) { Price = sellPrice };
             var fill = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
-                { FillPrice = sellPrice, FillQuantity = -quantity };
+                { FillPrice = sellPrice, FillQuantity = -quantity, Status = OrderStatus.Filled };
             orderProcessor.AddOrder(order);
             var request = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, order.Quantity, 0, 0, order.Time, null);
             request.SetOrderId(0);
@@ -2463,7 +2462,6 @@ namespace QuantConnect.Tests.Common.Securities
             Assert.AreEqual(-1, securities[Symbols.SPY_P_192_Feb19_2016].Holdings.Quantity);
         }
 
-        [Test]
         [TestCase(DataNormalizationMode.Adjusted)]
         [TestCase(DataNormalizationMode.Raw)]
         [TestCase(DataNormalizationMode.SplitAdjusted)]
@@ -2472,6 +2470,7 @@ namespace QuantConnect.Tests.Common.Securities
         {
             var algorithm = new QCAlgorithm();
             algorithm.SubscriptionManager.SetDataManager(new DataManagerStub(algorithm));
+            algorithm.UniverseSettings.DataNormalizationMode = mode;
             algorithm.SetLiveMode(true);
             var initialCash = algorithm.Portfolio.CashBook.TotalValueInAccountCurrency;
 
@@ -2492,7 +2491,41 @@ namespace QuantConnect.Tests.Common.Securities
             Assert.AreEqual(initialCash, algorithm.Portfolio.CashBook.TotalValueInAccountCurrency);
         }
 
-        [Test]
+        [TestCase(true)]
+        [TestCase(false)]
+        public void SplitPartialSharesHandling(bool hasData)
+        {
+            var algorithm = new QCAlgorithm();
+            algorithm.SubscriptionManager.SetDataManager(new DataManagerStub(algorithm));
+            algorithm.SetLiveMode(true);
+            var initialCash = algorithm.Portfolio.CashBook.TotalValueInAccountCurrency;
+
+            var spy = algorithm.AddEquity("SPY");
+            if (hasData)
+            {
+                spy.SetMarketPrice(new Tick(new DateTime(2000, 01, 01), Symbols.SPY, 100m, 99m, 101m) { TickType = TickType.Trade });
+            }
+            spy.Holdings.SetHoldings(100m, 100);
+
+            var split = new Split(Symbols.SPY, new DateTime(2000, 01, 01), 100, 0.49999m, SplitType.SplitOccurred);
+            var newAvgPrice = spy.Holdings.AveragePrice * split.SplitFactor;
+            var newQuantity = spy.Holdings.Quantity / split.SplitFactor;
+            var leftOver = newQuantity - (int)newQuantity;
+
+            algorithm.Portfolio.ApplySplit(split,
+                algorithm.LiveMode,
+                algorithm.SubscriptionManager.SubscriptionDataConfigService
+                    .GetSubscriptionDataConfigs(spy.Symbol)
+                    .DataNormalizationMode());
+
+            // confirm the split was properly applied to our holdings, no left over cash from split
+            Assert.AreEqual(newAvgPrice, spy.Holdings.AveragePrice);
+            Assert.AreEqual((int)newQuantity, spy.Holdings.Quantity);
+
+            var cashDifference = leftOver * split.Price * split.SplitFactor;
+            Assert.AreEqual(initialCash + cashDifference, algorithm.Portfolio.CashBook.TotalValueInAccountCurrency);
+        }
+
         [TestCase(DataNormalizationMode.Adjusted)]
         [TestCase(DataNormalizationMode.Raw)]
         [TestCase(DataNormalizationMode.SplitAdjusted)]
@@ -2500,6 +2533,7 @@ namespace QuantConnect.Tests.Common.Securities
         public void NeverAppliesDividendInLiveMode(DataNormalizationMode mode)
         {
             var algorithm = new QCAlgorithm();
+            algorithm.UniverseSettings.DataNormalizationMode = mode;
             algorithm.SubscriptionManager.SetDataManager(new DataManagerStub(algorithm));
             algorithm.SetLiveMode(true);
             var initialCash = algorithm.Portfolio.CashBook.TotalValueInAccountCurrency;

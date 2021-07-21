@@ -11,11 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-from datetime import datetime
-from QuantConnect.Algorithm import *
-from QuantConnect.Data import *
-from QuantConnect.Securities.Option import *
-from QuantConnect import *
+from AlgorithmImports import *
 
 ### <summary>
 ### This regression algorithm tests In The Money (ITM) index option expiry for calls.
@@ -29,7 +25,9 @@ class IndexOptionCallITMGreeksExpiryRegressionAlgorithm(QCAlgorithm):
         self.SetStartDate(2021, 1, 4)
         self.SetEndDate(2021, 1, 31)
 
-        self.spx = self.AddIndex("SPX", Resolution.Minute).Symbol
+        spx = self.AddIndex("SPX", Resolution.Minute)
+        spx.VolatilityModel = StandardDeviationOfReturnsVolatilityModel(60, Resolution.Minute, timedelta(minutes=1))
+        self.spx = spx.Symbol
 
         # Select a index option call expiring ITM, and adds it to the algorithm.
         self.spxOption = list(self.OptionChainProvider.GetOptionContractList(self.spx, self.Time))
@@ -74,11 +72,12 @@ class IndexOptionCallITMGreeksExpiryRegressionAlgorithm(QCAlgorithm):
         if any([i for i in deltas if i == 0]):
             raise Exception("Option contract Delta was equal to zero")
 
-        #if any([i for i in gammas if i == 0]):
-        #    raise AggregateException("Option contract Gamma was equal to zero")
+        # Delta is 1, therefore we expect a gamma of 0
+        if any([i for i in gammas if i == 0]):
+            raise AggregateException("Option contract Gamma was equal to zero")
 
-        #if any([i for i in lambda_ if lambda_ == 0]):
-        #    raise AggregateException("Option contract Lambda was equal to zero")
+        if any([i for i in lambda_ if lambda_ == 0]):
+            raise AggregateException("Option contract Lambda was equal to zero")
 
         if any([i for i in rho if i == 0]):
             raise Exception("Option contract Rho was equal to zero")
@@ -86,8 +85,10 @@ class IndexOptionCallITMGreeksExpiryRegressionAlgorithm(QCAlgorithm):
         if any([i for i in theta if i == 0]):
             raise Exception("Option contract Theta was equal to zero")
 
-        #if any([i for i in vega if vega == 0]):
-        #    raise AggregateException("Option contract Vega was equal to zero")
+        # The strike is far away from the underlying asset's price, and we're very close to expiry.
+        # Zero is an expected value here.
+        if any([i for i in vega if vega == 0]):
+            raise AggregateException("Option contract Vega was equal to zero")
 
         if not self.invested:
             self.SetHoldings(list(list(data.OptionChains.Values)[0].Contracts.Values)[0].Symbol, 1)

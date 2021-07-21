@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -21,6 +21,8 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
@@ -50,6 +52,7 @@ using Timer = System.Timers.Timer;
 using static QuantConnect.StringExtensions;
 using Microsoft.IO;
 using NodaTime.TimeZones;
+using QuantConnect.Configuration;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Securities.FutureOption;
 using QuantConnect.Securities.Option;
@@ -61,9 +64,11 @@ namespace QuantConnect
     /// </summary>
     public static class Extensions
     {
-        private static RecyclableMemoryStreamManager MemoryManager = new RecyclableMemoryStreamManager();
         private static ConcurrentBag<Guid> Guids = new ConcurrentBag<Guid>();
-        private static readonly HashSet<string> _invalidSecurityTypes = new HashSet<string>();
+        private static readonly HashSet<string> InvalidSecurityTypes = new HashSet<string>();
+        private static readonly Regex DateCheck = new Regex(@"\d{8}", RegexOptions.Compiled);
+        private static RecyclableMemoryStreamManager MemoryManager = new RecyclableMemoryStreamManager();
+        private static readonly int DataUpdatePeriod = Config.GetInt("api-data-update-period", 1);
 
         private static readonly Dictionary<IntPtr, PythonActivator> PythonActivators
             = new Dictionary<IntPtr, PythonActivator>();
@@ -86,6 +91,65 @@ namespace QuantConnect
         /// like future options the market close would match the delisted event time and would cancel all orders and mark the security
         /// as non tradable and delisted.</remarks>
         public static TimeSpan DelistingMarketCloseOffsetSpan { get; set; } = TimeSpan.FromMinutes(-15);
+
+        /// <summary>
+        /// Determine if the file is out of date according to our download period.
+        /// Date based files are never out of date (Files with YYYYMMDD)
+        /// </summary>
+        /// <param name="filepath">Path to the file</param>
+        /// <returns>True if the file is out of date</returns>
+        public static bool IsOutOfDate(this string filepath)
+        {
+            var fileName = Path.GetFileName(filepath);
+            // helper to determine if file is date based using regex, matches a 8 digit value because we expect YYYYMMDD
+            return !DateCheck.IsMatch(fileName) && DateTime.Now - TimeSpan.FromDays(DataUpdatePeriod) > File.GetLastWriteTime(filepath);
+        }
+
+        /// <summary>
+        /// Helper method to download a provided url as a string
+        /// </summary>
+        /// <param name="url">The url to download data from</param>
+        public static string DownloadData(this string url)
+        {
+            using (var client = new HttpClient())
+            {
+                try
+                {
+                    using (var response = client.GetAsync(url).Result)
+                    {
+                        using (var content = response.Content)
+                        {
+                            return content.ReadAsStringAsync().Result;
+                        }
+                    }
+                }
+                catch (WebException ex)
+                {
+                    Log.Error(ex, $"DownloadData(): failed for: '{url}'");
+                    // If server returned an error most likely on this day there is no data we are going to the next cycle
+                    return null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Helper method to create an order request to liquidate a delisted asset
+        /// </summary>
+        public static SubmitOrderRequest CreateDelistedSecurityOrderRequest(this Security security, DateTime utcTime)
+        {
+            var orderType = OrderType.Market;
+            var tag = "Liquidate from delisting";
+            if (security.Type.IsOption())
+            {
+                // tx handler will determine auto exercise/assignment
+                tag = "Option Expired";
+                orderType = OrderType.OptionExercise;
+            }
+
+            // submit an order to liquidate on market close or exercise (for options)
+            return new SubmitOrderRequest(orderType, security.Type, security.Symbol,
+                -security.Holdings.Quantity, 0, 0, utcTime, tag);
+        }
 
         /// <summary>
         /// Safe multiplies a decimal by 100
@@ -471,20 +535,25 @@ namespace QuantConnect
             IAlgorithm algorithm,
             bool targetIsDelta = false)
         {
-            return targets.Select(x => new {
-                    PortfolioTarget = x,
-                    TargetQuantity = x.Quantity,
-                    ExistingQuantity = algorithm.Portfolio[x.Symbol].Quantity
-                                       + algorithm.Transactions.GetOpenOrderTickets(x.Symbol)
-                                           .Aggregate(0m, (d, t) => d + t.Quantity - t.QuantityFilled),
-                    Security = algorithm.Securities[x.Symbol]
+            return targets.Select(x =>
+                {
+                    var security = algorithm.Securities[x.Symbol];
+                    return new
+                    {
+                        PortfolioTarget = x,
+                        TargetQuantity = OrderSizing.AdjustByLotSize(security, x.Quantity),
+                        ExistingQuantity = security.Holdings.Quantity
+                            + algorithm.Transactions.GetOpenOrderTickets(x.Symbol)
+                                .Aggregate(0m, (d, t) => d + t.Quantity - t.QuantityFilled),
+                        Security = security
+                    };
                 })
                 .Where(x => x.Security.HasData
                             && (targetIsDelta ? Math.Abs(x.TargetQuantity) : Math.Abs(x.TargetQuantity - x.ExistingQuantity))
                             >= x.Security.SymbolProperties.LotSize
                 )
                 .Select(x => new {
-                    PortfolioTarget = x.PortfolioTarget,
+                    x.PortfolioTarget,
                     OrderValue = Math.Abs((targetIsDelta ? x.TargetQuantity : (x.TargetQuantity - x.ExistingQuantity)) * x.Security.Price),
                     IsReducingPosition = x.ExistingQuantity != 0
                                          && Math.Abs((targetIsDelta ? (x.TargetQuantity + x.ExistingQuantity) : x.TargetQuantity)) < Math.Abs(x.ExistingQuantity)
@@ -631,6 +700,80 @@ namespace QuantConnect
                 hash.Append(theByte.ToStringInvariant("x2"));
             }
             return hash.ToString();
+        }
+
+        /// <summary>
+        /// Converts a long to an uppercase alpha numeric string
+        /// </summary>
+        public static string EncodeBase36(this ulong data)
+        {
+            var stack = new Stack<char>(15);
+            while (data != 0)
+            {
+                var value = data % 36;
+                var c = value < 10
+                    ? (char)(value + '0')
+                    : (char)(value - 10 + 'A');
+
+                stack.Push(c);
+                data /= 36;
+            }
+            return new string(stack.ToArray());
+        }
+
+        /// <summary>
+        /// Converts an upper case alpha numeric string into a long
+        /// </summary>
+        public static ulong DecodeBase36(this string symbol)
+        {
+            var result = 0ul;
+            var baseValue = 1ul;
+            for (var i = symbol.Length - 1; i > -1; i--)
+            {
+                var c = symbol[i];
+
+                // assumes alpha numeric upper case only strings
+                var value = (uint)(c <= 57
+                    ? c - '0'
+                    : c - 'A' + 10);
+
+                result += baseValue * value;
+                baseValue *= 36;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Convert a string to Base64 Encoding
+        /// </summary>
+        /// <param name="text">Text to encode</param>
+        /// <returns>Encoded result</returns>
+        public static string EncodeBase64(this string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            byte[] textBytes = Encoding.UTF8.GetBytes(text);
+            return Convert.ToBase64String(textBytes);
+        }
+
+        /// <summary>
+        /// Decode a Base64 Encoded string
+        /// </summary>
+        /// <param name="base64EncodedText">Text to decode</param>
+        /// <returns>Decoded result</returns>
+        public static string DecodeBase64(this string base64EncodedText)
+        {
+            if (string.IsNullOrEmpty(base64EncodedText))
+            {
+                return base64EncodedText;
+            }
+
+            byte[] base64EncodedBytes = Convert.FromBase64String(base64EncodedText);
+            return Encoding.UTF8.GetString(base64EncodedBytes);
         }
 
         /// <summary>
@@ -836,19 +979,6 @@ namespace QuantConnect
         /// <param name="d">Double we're rounding</param>
         /// <param name="digits">Number of significant figures</param>
         /// <returns>New double rounded to digits-significant figures</returns>
-        public static double RoundToSignificantDigits(this double d, int digits)
-        {
-            if (d == 0) return 0;
-            var scale = Math.Pow(10, Math.Floor(Math.Log10(Math.Abs(d))) + 1);
-            return scale * Math.Round(d / scale, digits);
-        }
-
-        /// <summary>
-        /// Extension method to round a double value to a fixed number of significant figures instead of a fixed decimal places.
-        /// </summary>
-        /// <param name="d">Double we're rounding</param>
-        /// <param name="digits">Number of significant figures</param>
-        /// <returns>New double rounded to digits-significant figures</returns>
         public static decimal RoundToSignificantDigits(this decimal d, int digits)
         {
             if (d == 0) return 0;
@@ -900,6 +1030,29 @@ namespace QuantConnect
             }
 
             return $"{number - 5000000m:#,,,.##}B";
+        }
+
+        /// <summary>
+        /// Discretizes the <paramref name="value"/> to a maximum precision specified by <paramref name="quanta"/>. Quanta
+        /// can be an arbitrary positive number and represents the step size. Consider a quanta equal to 0.15 and rounding
+        /// a value of 1.0. Valid values would be 0.9 (6 quanta) and 1.05 (7 quanta) which would be rounded up to 1.05.
+        /// </summary>
+        /// <param name="value">The value to be rounded by discretization</param>
+        /// <param name="quanta">The maximum precision allowed by the value</param>
+        /// <param name="mode">Specifies how to handle the rounding of half value, defaulting to away from zero.</param>
+        /// <returns></returns>
+        public static decimal DiscretelyRoundBy(this decimal value, decimal quanta, MidpointRounding mode = MidpointRounding.AwayFromZero)
+        {
+            if (quanta == 0m)
+            {
+                return value;
+            }
+
+            // away from zero is the 'common sense' rounding.
+            // +0.5 rounded by 1 yields +1
+            // -0.5 rounded by 1 yields -1
+            var multiplicand = Math.Round(value / quanta, mode);
+            return quanta * multiplicand;
         }
 
         /// <summary>
@@ -1615,7 +1768,7 @@ namespace QuantConnect
                 return true;
             }
 
-            if (_invalidSecurityTypes.Add(value))
+            if (InvalidSecurityTypes.Add(value))
             {
                 Log.Error($"Extensions.TryParseSecurityType(): Attempted to parse unknown SecurityType: {value}");
             }
@@ -2645,7 +2798,12 @@ namespace QuantConnect
         /// <summary>
         /// Scale data based on factor function
         /// </summary>
-        public static BaseData Scale(this BaseData data, Func<decimal, decimal> factor)
+        /// <param name="data">Data to Adjust</param>
+        /// <param name="factor">Function to factor prices by</param>
+        /// <param name="volumeFactor">Factor to multiply volume/askSize/bidSize/quantity by</param>
+        /// <remarks>Volume values are rounded to the nearest integer, lot size purposefully not considered
+        /// as scaling only applies to equities</remarks>
+        public static BaseData Scale(this BaseData data, Func<decimal, decimal> factor, decimal volumeFactor)
         {
             switch (data.DataType)
             {
@@ -2657,6 +2815,7 @@ namespace QuantConnect
                         tradeBar.High = factor(tradeBar.High);
                         tradeBar.Low = factor(tradeBar.Low);
                         tradeBar.Close = factor(tradeBar.Close);
+                        tradeBar.Volume = Math.Round(tradeBar.Volume * volumeFactor);
                     }
                     break;
                 case MarketDataType.Tick:
@@ -2677,11 +2836,14 @@ namespace QuantConnect
                     if (tick.TickType == TickType.Trade)
                     {
                         tick.Value = factor(tick.Value);
+                        tick.Quantity = Math.Round(tick.Quantity * volumeFactor);
                         break;
                     }
 
                     tick.BidPrice = tick.BidPrice != 0 ? factor(tick.BidPrice) : 0;
+                    tick.BidSize = Math.Round(tick.BidSize * volumeFactor);
                     tick.AskPrice = tick.AskPrice != 0 ? factor(tick.AskPrice) : 0;
+                    tick.AskSize = Math.Round(tick.AskSize * volumeFactor);
 
                     if (tick.BidPrice == 0)
                     {
@@ -2715,6 +2877,8 @@ namespace QuantConnect
                             quoteBar.Bid.Close = factor(quoteBar.Bid.Close);
                         }
                         quoteBar.Value = quoteBar.Close;
+                        quoteBar.LastAskSize = Math.Round(quoteBar.LastAskSize * volumeFactor);
+                        quoteBar.LastBidSize = Math.Round(quoteBar.LastBidSize * volumeFactor);
                     }
                     break;
                 case MarketDataType.Auxiliary:
@@ -2736,7 +2900,7 @@ namespace QuantConnect
         /// <returns></returns>
         public static BaseData Normalize(this BaseData data, SubscriptionDataConfig config)
         {
-            return data?.Scale(p => config.GetNormalizedPrice(p));
+            return data?.Scale(p => config.GetNormalizedPrice(p), 1/config.PriceScaleFactor);
         }
 
         /// <summary>
@@ -2747,7 +2911,7 @@ namespace QuantConnect
         /// <returns></returns>
         public static BaseData Adjust(this BaseData data, decimal scale)
         {
-            return data?.Scale(p => p * scale);
+            return data?.Scale(p => p * scale, 1/scale);
         }
 
         /// <summary>
@@ -2944,6 +3108,140 @@ namespace QuantConnect
 
             // If we made it here then only filter it if its an InternalFeed
             return !config.IsInternalFeed;
+        }
+
+        /// <summary>
+        /// Gets the <see cref="OrderDirection"/> that corresponds to the specified <paramref name="side"/>
+        /// </summary>
+        /// <param name="side">The position side to be converted</param>
+        /// <returns>The order direction that maps from the provided position side</returns>
+        public static OrderDirection ToOrderDirection(this PositionSide side)
+        {
+            switch (side)
+            {
+                case PositionSide.Short: return OrderDirection.Sell;
+                case PositionSide.None: return OrderDirection.Hold;
+                case PositionSide.Long: return OrderDirection.Buy;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(side), side, null);
+            }
+        }
+
+        /// <summary>
+        /// Determines if an order with the specified <paramref name="direction"/> would close a position with the
+        /// specified <paramref name="side"/>
+        /// </summary>
+        /// <param name="direction">The direction of the order, buy/sell</param>
+        /// <param name="side">The side of the position, long/short</param>
+        /// <returns>True if the order direction would close the position, otherwise false</returns>
+        public static bool Closes(this OrderDirection direction, PositionSide side)
+        {
+            switch (side)
+            {
+                case PositionSide.Short:
+                    switch (direction)
+                    {
+                        case OrderDirection.Buy: return true;
+                        case OrderDirection.Sell: return false;
+                        case OrderDirection.Hold: return false;
+                        default:
+                            throw new ArgumentOutOfRangeException(nameof(direction), direction, null);
+                    }
+
+                case PositionSide.Long:
+                    switch (direction)
+                    {
+                        case OrderDirection.Buy: return false;
+                        case OrderDirection.Sell: return true;
+                        case OrderDirection.Hold: return false;
+                        default:
+                            throw new ArgumentOutOfRangeException(nameof(direction), direction, null);
+                    }
+
+                case PositionSide.None:
+                    return false;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(side), side, null);
+            }
+        }
+
+        /// <summary>
+        /// Determines if the two lists are equal, including all items at the same indices.
+        /// </summary>
+        /// <typeparam name="T">The element type</typeparam>
+        /// <param name="left">The left list</param>
+        /// <param name="right">The right list</param>
+        /// <returns>True if the two lists have the same counts and items at each index evaluate as equal</returns>
+        public static bool ListEquals<T>(this IReadOnlyList<T> left, IReadOnlyList<T> right)
+        {
+            var count = left.Count;
+            if (count != right.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                if (!left[i].Equals(right[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Computes a deterministic hash code based on the items in the list. This hash code is dependent on the
+        /// ordering of items.
+        /// </summary>
+        /// <typeparam name="T">The element type</typeparam>
+        /// <param name="list">The list</param>
+        /// <returns>A hash code dependent on the ordering of elements in the list</returns>
+        public static int GetListHashCode<T>(this IReadOnlyList<T> list)
+        {
+            unchecked
+            {
+                var hashCode = 17;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    hashCode += (hashCode * 397) ^ list[i].GetHashCode();
+                }
+
+                return hashCode;
+            }
+        }
+
+        /// <summary>
+        /// Read all lines from a stream reader
+        /// </summary>
+        /// <param name="reader">Stream reader to read from</param>
+        /// <returns>Enumerable of lines in stream</returns>
+        public static IEnumerable<string> ReadAllLines(this StreamReader reader)
+        {
+            string line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                yield return line;
+            }
+        }
+
+        /// <summary>
+        /// Determine if this SecurityType requires mapping
+        /// </summary>
+        /// <param name="securityType">Type to check</param>
+        /// <returns>True if it needs to be mapped</returns>
+        public static bool RequiresMapping(this SecurityType securityType)
+        {
+            switch (securityType)
+            {
+                case SecurityType.Equity:
+                case SecurityType.Option:
+                    return true;
+                default:
+                    return false;
+            }
         }
     }
 }

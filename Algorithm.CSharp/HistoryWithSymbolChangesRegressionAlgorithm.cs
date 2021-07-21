@@ -52,7 +52,7 @@ namespace QuantConnect.Algorithm.CSharp
             }
 
             var firstBar = history.First().Bars.GetValue(symbol);
-            if (firstBar.EndTime != new DateTime(1998, 3, 3) || firstBar.Close != 25.11427695m)
+            if (firstBar.EndTime != new DateTime(1998, 3, 3) || firstBar.Close != 24.88039125m)
             {
                 throw new Exception("First History bar - unexpected data received");
             }
@@ -94,6 +94,7 @@ namespace QuantConnect.Algorithm.CSharp
             {"Treynor Ratio", "0"},
             {"Total Fees", "$0.00"},
             {"Estimated Strategy Capacity", "$0"},
+            {"Lowest Capacity Asset", ""},
             {"Fitness Score", "0"},
             {"Kelly Criterion Estimate", "0"},
             {"Kelly Criterion Probability Value", "0"},

@@ -79,13 +79,13 @@ namespace QuantConnect.Algorithm.CSharp
         /// </summary>
         public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
         {
-            {"Total Trades", "3"},
+            {"Total Trades", "2"},
             {"Average Win", "0%"},
             {"Average Loss", "0.00%"},
             {"Compounding Annual Return", "8.171%"},
             {"Drawdown", "55.000%"},
             {"Expectancy", "-1"},
-            {"Net Profit", "125.419%"},
+            {"Net Profit", "125.420%"},
             {"Sharpe Ratio", "0.469"},
             {"Probabilistic Sharpe Ratio", "2.603%"},
             {"Loss Rate", "100%"},
@@ -98,8 +98,9 @@ namespace QuantConnect.Algorithm.CSharp
             {"Information Ratio", "-0.001"},
             {"Tracking Error", "0.265"},
             {"Treynor Ratio", "-0.927"},
-            {"Total Fees", "$44.46"},
-            {"Estimated Strategy Capacity", "$1000000000.00"},
+            {"Total Fees", "$43.46"},
+            {"Estimated Strategy Capacity", "$430000000.00"},
+            {"Lowest Capacity Asset", "SPY R735QTJ8XC9X"},
             {"Fitness Score", "0"},
             {"Kelly Criterion Estimate", "37.332"},
             {"Kelly Criterion Probability Value", "0.01"},
@@ -112,14 +113,14 @@ namespace QuantConnect.Algorithm.CSharp
             {"Long Insight Count", "2604"},
             {"Short Insight Count", "0"},
             {"Long/Short Ratio", "100%"},
-            {"Estimated Monthly Alpha Value", "$1128748.4737"},
-            {"Total Accumulated Estimated Alpha Value", "$142117271.3667"},
-            {"Mean Population Estimated Insight Value", "$54597.4919"},
+            {"Estimated Monthly Alpha Value", "$1220785.7706"},
+            {"Total Accumulated Estimated Alpha Value", "$153705406.1995"},
+            {"Mean Population Estimated Insight Value", "$59049.3301"},
             {"Mean Population Direction", "43.4499%"},
             {"Mean Population Magnitude", "43.4499%"},
-            {"Rolling Averaged Population Direction", "48.7105%"},
-            {"Rolling Averaged Population Magnitude", "48.7105%"},
-            {"OrderListHash", "03cc0ad5b1c4b7803b2e9483da1d7543"}
+            {"Rolling Averaged Population Direction", "48.5717%"},
+            {"Rolling Averaged Population Magnitude", "48.5717%"},
+            {"OrderListHash", "3aa1d64da57ef9841bef4aa8b0292521"}
         };
     }
 }

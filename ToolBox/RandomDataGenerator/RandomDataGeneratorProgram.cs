@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using QuantConnect.Data;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Data.Market;
 using QuantConnect.ToolBox.CoarseUniverseGenerator;
@@ -66,8 +67,11 @@ namespace QuantConnect.ToolBox.RandomDataGenerator
                 CoarseUniverseGeneratorProgram.CoarseUniverseGenerator();
             }
 
-            output.Info.WriteLine("Press any key to exit...");
-            Console.ReadKey();
+            if (!Console.IsInputRedirected)
+            {
+                output.Info.WriteLine("Press any key to exit...");
+                Console.ReadKey();
+            }
         }
 
         public static DateTime GetDateMidpoint(DateTime start, DateTime end)
