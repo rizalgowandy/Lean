@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -154,14 +154,14 @@ namespace QuantConnect.Statistics
         public decimal WinLossRatio { get; set; }
 
         /// <summary>
-        /// The ratio of the number of winning trades to the total number of trades
+        /// The ratio of the number of trades with positive profit loss to the total number of trades
         /// </summary>
         /// <remarks>If the total number of trades is zero, WinRate is set to zero</remarks>
         [JsonConverter(typeof(JsonRoundingConverter))]
         public decimal WinRate { get; set; }
 
         /// <summary>
-        /// The ratio of the number of losing trades to the total number of trades
+        /// The ratio of the number of trades with zero or negative profit loss to the total number of trades
         /// </summary>
         /// <remarks>If the total number of trades is zero, LossRate is set to zero</remarks>
         [JsonConverter(typeof(JsonRoundingConverter))]
@@ -286,6 +286,7 @@ namespace QuantConnect.Statistics
             var allTradeDurationsTicks = new List<long>();
             var winningTradeDurationsTicks = new List<long>();
             var losingTradeDurationsTicks = new List<long>();
+            var numberOfITMOptionsWinningTrades = 0;
 
             foreach (var trade in trades)
             {
@@ -359,10 +360,23 @@ namespace QuantConnect.Statistics
                     if (trade.ProfitLoss < LargestLoss)
                         LargestLoss = trade.ProfitLoss;
 
-                    maxConsecutiveWinners = 0;
-                    maxConsecutiveLosers++;
-                    if (maxConsecutiveLosers > MaxConsecutiveLosingTrades)
-                        MaxConsecutiveLosingTrades = maxConsecutiveLosers;
+                    // even though losing money, an ITM option trade is a winning trade,
+                    // so IsWin for an ITM OptionTrade will return true even if the trade was not profitable.
+                    if (trade.IsWin)
+                    {
+                        numberOfITMOptionsWinningTrades++;
+                        maxConsecutiveLosers = 0;
+                        maxConsecutiveWinners++;
+                        if (maxConsecutiveWinners > MaxConsecutiveWinningTrades)
+                            MaxConsecutiveWinningTrades = maxConsecutiveWinners;
+                    }
+                    else
+                    {
+                        maxConsecutiveWinners = 0;
+                        maxConsecutiveLosers++;
+                        if (maxConsecutiveLosers > MaxConsecutiveLosingTrades)
+                            MaxConsecutiveLosingTrades = maxConsecutiveLosers;
+                    }
 
                     if (TotalProfitLoss - maxTotalProfitLoss < MaximumClosedTradeDrawdown)
                         MaximumClosedTradeDrawdown = TotalProfitLoss - maxTotalProfitLoss;
@@ -388,11 +402,16 @@ namespace QuantConnect.Statistics
                 if (trade.MFE > LargestMFE)
                     LargestMFE = trade.MFE;
 
-                if (trade.EndTradeDrawdown < MaximumEndTradeDrawdown)
+                if (trade.EndTradeDrawdown > MaximumEndTradeDrawdown)
                     MaximumEndTradeDrawdown = trade.EndTradeDrawdown;
 
                 TotalFees += trade.TotalFees;
             }
+
+            // Adjust number of winning and losing trades: ITM options assignment loss counts as a loss for profit and loss calculations,
+            // but adds a win to the wins count since this is an actual win even though premium paid is a loss.
+            NumberOfWinningTrades += numberOfITMOptionsWinningTrades;
+            NumberOfLosingTrades -= numberOfITMOptionsWinningTrades;
 
             ProfitLossRatio = AverageLoss == 0 ? 0 : AverageProfit / Math.Abs(AverageLoss);
             WinLossRatio = TotalNumberOfTrades == 0 ? 0 : (NumberOfLosingTrades > 0 ? (decimal)NumberOfWinningTrades / NumberOfLosingTrades : 10);

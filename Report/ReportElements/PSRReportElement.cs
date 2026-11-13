@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -16,6 +16,7 @@
 using System;
 using System.Linq;
 using Deedle;
+using QuantConnect.Data;
 using QuantConnect.Packets;
 
 namespace QuantConnect.Report.ReportElements
@@ -26,18 +27,25 @@ namespace QuantConnect.Report.ReportElements
         private BacktestResult _backtest;
 
         /// <summary>
+        /// The number of trading days per year to get better result of statistics
+        /// </summary>
+        private int _tradingDaysPerYear;
+
+        /// <summary>
         /// Estimate the PSR of the strategy.
         /// </summary>
         /// <param name="name">Name of the widget</param>
         /// <param name="key">Location of injection</param>
         /// <param name="backtest">Backtest result object</param>
         /// <param name="live">Live result object</param>
-        public PSRReportElement(string name, string key, BacktestResult backtest, LiveResult live)
+        /// <param name="tradingDaysPerYear">The number of trading days per year to get better result of statistics</param>
+        public PSRReportElement(string name, string key, BacktestResult backtest, LiveResult live, int tradingDaysPerYear)
         {
             _live = live;
             _backtest = backtest;
             Name = name;
             Key = key;
+            _tradingDaysPerYear = tradingDaysPerYear;
         }
 
         /// <summary>
@@ -68,14 +76,21 @@ namespace QuantConnect.Report.ReportElements
             }
 
             var sixMonthsBefore = equityCurvePerformance.LastKey() - TimeSpan.FromDays(180);
+            // Skip weekends so we stay on a trading-day basis. The risk-free rate below is deannualized by
+            // tradingDaysPerYear, so leaving calendar days in would deduct it over ~365 days a year and over-deduct the rate
+            var lastSixMonthsPerformance = equityCurvePerformance.Where(kvp => kvp.Key >= sixMonthsBefore
+                && kvp.Key.DayOfWeek != DayOfWeek.Saturday
+                && kvp.Key.DayOfWeek != DayOfWeek.Sunday);
 
-            var benchmarkSharpeRatio = 1.0d / Math.Sqrt(252);
+            var benchmarkSharpeRatio = 1.0d / Math.Sqrt(_tradingDaysPerYear);
+            // Use the same excess-return basis as the reported PSR by subtracting the deannualized risk-free rate
+            var riskFreeRate = new InterestRateProvider().GetAverageRiskFreeRate(lastSixMonthsPerformance.Keys);
             psr = Statistics.Statistics.ProbabilisticSharpeRatio(
-                equityCurvePerformance
-                    .Where(kvp => kvp.Key >= sixMonthsBefore)
+                lastSixMonthsPerformance
                     .Values
-                    .ToList(), 
-                benchmarkSharpeRatio)
+                    .ToList(),
+                benchmarkSharpeRatio,
+                (double)riskFreeRate / _tradingDaysPerYear)
                 .SafeDecimalCast();
             
             Result = psr;

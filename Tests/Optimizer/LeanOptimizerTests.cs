@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -32,11 +32,24 @@ namespace QuantConnect.Tests.Optimizer
     [TestFixture, Parallelizable(ParallelScope.Children)]
     public class LeanOptimizerTests
     {
+        // These tests run in parallel and the LeanOptimizer constructor reads "optimization-update-interval" from the
+        // shared, global Config, while TrackEstimation writes it. The underlying config store is not thread-safe, so a
+        // write racing a concurrent read can corrupt it. Serialize the construction-time reads against that write.
+        private static readonly object _configLock = new object();
+
+        private static FakeLeanOptimizer CreateOptimizer(OptimizationNodePacket packet)
+        {
+            lock (_configLock)
+            {
+                return new FakeLeanOptimizer(packet);
+            }
+        }
+
         [TestCase("QuantConnect.Optimizer.Strategies.GridSearchOptimizationStrategy")]
         [TestCase("QuantConnect.Optimizer.Strategies.EulerSearchOptimizationStrategy")]
         public void MaximizeNoTarget(string strategyName)
         {
-            var resetEvent = new ManualResetEvent(false);
+            using var resetEvent = new ManualResetEvent(false);
             var packet = new OptimizationNodePacket
             {
                 OptimizationStrategy = strategyName,
@@ -51,7 +64,7 @@ namespace QuantConnect.Tests.Optimizer
                 MaximumConcurrentBacktests = 20,
                 OptimizationStrategySettings = new StepBaseOptimizationStrategySettings { DefaultSegmentAmount = 10 }
             };
-            var optimizer = new FakeLeanOptimizer(packet);
+            using var optimizer = CreateOptimizer(packet);
 
             OptimizationResult result = null;
             optimizer.Ended += (s, solution) =>
@@ -77,7 +90,7 @@ namespace QuantConnect.Tests.Optimizer
         [TestCase("QuantConnect.Optimizer.Strategies.EulerSearchOptimizationStrategy")]
         public void MinimizeWithTarget(string strategyName)
         {
-            var resetEvent = new ManualResetEvent(false);
+            using var resetEvent = new ManualResetEvent(false);
             var packet = new OptimizationNodePacket
             {
                 OptimizationStrategy = strategyName,
@@ -90,7 +103,7 @@ namespace QuantConnect.Tests.Optimizer
                 MaximumConcurrentBacktests = 20,
                 OptimizationStrategySettings = new StepBaseOptimizationStrategySettings { DefaultSegmentAmount = 10 }
             };
-            var optimizer = new FakeLeanOptimizer(packet);
+            using var optimizer = CreateOptimizer(packet);
 
             OptimizationResult result = null;
             optimizer.Ended += (s, solution) =>
@@ -112,7 +125,7 @@ namespace QuantConnect.Tests.Optimizer
         [Test]
         public void MaximizeGridWithConstraints()
         {
-            var resetEvent = new ManualResetEvent(false);
+            using var resetEvent = new ManualResetEvent(false);
             var packet = new OptimizationNodePacket
             {
                 Criterion = new Target("Profit", new Maximization(), null),
@@ -127,7 +140,7 @@ namespace QuantConnect.Tests.Optimizer
                 },
                 MaximumConcurrentBacktests = 20
             };
-            var optimizer = new FakeLeanOptimizer(packet);
+            using var optimizer = CreateOptimizer(packet);
 
             OptimizationResult result = null;
             optimizer.Ended += (s, solution) =>
@@ -153,7 +166,7 @@ namespace QuantConnect.Tests.Optimizer
         [Test]
         public void MaximizeEulerWithConstraints()
         {
-            var resetEvent = new ManualResetEvent(false);
+            using var resetEvent = new ManualResetEvent(false);
             var packet = new OptimizationNodePacket
             {
                 OptimizationStrategy = "QuantConnect.Optimizer.Strategies.EulerSearchOptimizationStrategy",
@@ -170,7 +183,7 @@ namespace QuantConnect.Tests.Optimizer
                 MaximumConcurrentBacktests = 20,
                 OptimizationStrategySettings = new StepBaseOptimizationStrategySettings { DefaultSegmentAmount = 10 }
             };
-            var optimizer = new FakeLeanOptimizer(packet);
+            using var optimizer = CreateOptimizer(packet);
 
             OptimizationResult result = null;
             optimizer.Ended += (s, solution) =>
@@ -196,7 +209,7 @@ namespace QuantConnect.Tests.Optimizer
         [Test]
         public void MinimizeWithTargetAndConstraints()
         {
-            var resetEvent = new ManualResetEvent(false);
+            using var resetEvent = new ManualResetEvent(false);
             var packet = new OptimizationNodePacket
             {
                 Criterion = new Target("Profit", new Minimization(), 20),
@@ -211,7 +224,7 @@ namespace QuantConnect.Tests.Optimizer
                 },
                 MaximumConcurrentBacktests = 20
             };
-            var optimizer = new FakeLeanOptimizer(packet);
+            using var optimizer = CreateOptimizer(packet);
 
             OptimizationResult result = null;
             optimizer.Ended += (s, solution) =>
@@ -237,9 +250,12 @@ namespace QuantConnect.Tests.Optimizer
         [Test]
         public void TrackEstimation()
         {
-            Config.Set("optimization-update-interval", 1);
+            lock (_configLock)
+            {
+                Config.Set("optimization-update-interval", 1);
+            }
             OptimizationResult result = null;
-            var resetEvent = new ManualResetEvent(false);
+            using var resetEvent = new ManualResetEvent(false);
             var packet = new OptimizationNodePacket
             {
                 Criterion = new Target("Profit", new Minimization(), null),
@@ -254,7 +270,7 @@ namespace QuantConnect.Tests.Optimizer
                 },
                 MaximumConcurrentBacktests = 5
             };
-            var optimizer = new FakeLeanOptimizer(packet);
+            using var optimizer = CreateOptimizer(packet);
             // keep stats up-to-date
             int totalBacktest = optimizer.GetCurrentEstimate();
             int totalUpdates = 0;
@@ -294,11 +310,105 @@ namespace QuantConnect.Tests.Optimizer
             var runtimeStatistics = optimizer.GetRuntimeStatistics();
             Assert.NotZero(int.Parse(runtimeStatistics["Completed"], CultureInfo.InvariantCulture));
             Assert.NotZero(int.Parse(runtimeStatistics["Failed"], CultureInfo.InvariantCulture));
-            // we have 2 force updates at least, expect a few more over it.
-            Assert.Greater(totalUpdates, 2);
+            // there are 2 forced estimation updates (start and end); any additional in-progress updates depend on
+            // timing and are not guaranteed (e.g. when backtests complete/fail fast), so only the guaranteed
+            // minimum is asserted here to avoid a flaky "expected > 2 but was 2" failure.
+            Assert.GreaterOrEqual(totalUpdates, 2);
             Assert.AreEqual(int.Parse(runtimeStatistics["Completed"], CultureInfo.InvariantCulture)
                             + int.Parse(runtimeStatistics["Failed"], CultureInfo.InvariantCulture)
                             + int.Parse(runtimeStatistics["Running"], CultureInfo.InvariantCulture), totalBacktest);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LaunchFailureDoesNotDiscardPendingParameterSets(bool throwOnLaunch)
+        {
+            var packet = new OptimizationNodePacket
+            {
+                OptimizationStrategy = "QuantConnect.Optimizer.Strategies.EulerSearchOptimizationStrategy",
+                Criterion = new Target("Profit", new Maximization(), null),
+                OptimizationParameters = new HashSet<OptimizationParameter>
+                {
+                    new OptimizationStepParameter("x", 0, 20, 10, 5)
+                },
+                MaximumConcurrentBacktests = 1,
+                OptimizationStrategySettings = new StepBaseOptimizationStrategySettings { DefaultSegmentAmount = 2 }
+            };
+            OptimizationResult result = null;
+            LaunchFailureLeanOptimizer optimizer;
+            lock (_configLock)
+            {
+                optimizer = new LaunchFailureLeanOptimizer(packet, throwOnLaunch);
+            }
+            using var _ = optimizer;
+            optimizer.Ended += (s, solution) => result = solution;
+
+            optimizer.Start();
+            CollectionAssert.AreEqual(new[] { "0" }, optimizer.Attempts);
+
+            // the next launch fails, the one after it must still run
+            optimizer.CompleteLastLaunched();
+            CollectionAssert.AreEqual(new[] { "0", "10", "20" }, optimizer.Attempts);
+            Assert.IsNull(result);
+
+            // the failed launch was reported to the strategy, so its round ends and the search is refined around x = 20
+            optimizer.CompleteLastLaunched();
+            CollectionAssert.AreEqual(new[] { "0", "10", "20", "15" }, optimizer.Attempts);
+            Assert.IsNull(result);
+
+            optimizer.CompleteLastLaunched();
+            CollectionAssert.AreEqual(new[] { "0", "10", "20", "15", "20" }, optimizer.Attempts);
+            Assert.IsNull(result);
+
+            optimizer.CompleteLastLaunched();
+            Assert.IsNotNull(result);
+            Assert.AreEqual("20", result.ParameterSet.Value["x"]);
+            var runtimeStatistics = optimizer.GetRuntimeStatistics();
+            Assert.AreEqual("4", runtimeStatistics["Completed"]);
+            Assert.AreEqual("1", runtimeStatistics["Failed"]);
+        }
+
+        private class LaunchFailureLeanOptimizer : LeanOptimizer
+        {
+            private readonly bool _throwOnLaunch;
+            private string _lastLaunchedId;
+
+            public List<string> Attempts { get; } = new();
+
+            public LaunchFailureLeanOptimizer(OptimizationNodePacket packet, bool throwOnLaunch) : base(packet)
+            {
+                _throwOnLaunch = throwOnLaunch;
+            }
+
+            public void CompleteLastLaunched()
+            {
+                var x = RunningParameterSetForBacktest[_lastLaunchedId].Value["x"].ToDecimal();
+                NewResult(BacktestResult.Create(x).ToJson(), _lastLaunchedId);
+            }
+
+            protected override string RunLean(ParameterSet parameterSet, string backtestName)
+            {
+                var x = parameterSet.Value["x"];
+                Attempts.Add(x);
+                if (x != "10")
+                {
+                    _lastLaunchedId = $"backtest-{Attempts.Count}";
+                    return _lastLaunchedId;
+                }
+                if (_throwOnLaunch)
+                {
+                    throw new InvalidOperationException("Launch failure");
+                }
+                return null;
+            }
+
+            protected override void AbortLean(string backtestId)
+            {
+            }
+
+            protected override void SendUpdate()
+            {
+            }
         }
     }
 }

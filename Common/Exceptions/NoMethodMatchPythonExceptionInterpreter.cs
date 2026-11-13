@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -22,24 +22,22 @@ namespace QuantConnect.Exceptions
     /// <summary>
     /// Interprets <see cref="NoMethodMatchPythonExceptionInterpreter"/> instances
     /// </summary>
-    public class NoMethodMatchPythonExceptionInterpreter : IExceptionInterpreter
+    public class NoMethodMatchPythonExceptionInterpreter : PythonExceptionInterpreter
     {
         /// <summary>
         /// Determines the order that an instance of this class should be called
         /// </summary>
-        public int Order => 0;
+        public override int Order => 0;
 
         /// <summary>
         /// Determines if this interpreter should be applied to the specified exception.
         /// </summary>
         /// <param name="exception">The exception to check</param>
         /// <returns>True if the exception can be interpreted, false otherwise</returns>
-        public bool CanInterpret(Exception exception)
+        public override bool CanInterpret(Exception exception)
         {
-            return
-                exception?.GetType() == typeof(PythonException) &&
-                exception.Message.Contains("TypeError") &&
-                exception.Message.Contains("No method match");
+            return base.CanInterpret(exception) &&
+                exception.Message.Contains(Messages.NoMethodMatchPythonExceptionInterpreter.NoMethodMatchExpectedSubstring);
         }
 
         /// <summary>
@@ -48,17 +46,62 @@ namespace QuantConnect.Exceptions
         /// <param name="exception">The exception to be interpreted</param>
         /// <param name="innerInterpreter">An interpreter that should be applied to the inner exception.</param>
         /// <returns>The interpreted exception</returns>
-        public Exception Interpret(Exception exception, IExceptionInterpreter innerInterpreter)
+        public override Exception Interpret(Exception exception, IExceptionInterpreter innerInterpreter)
         {
             var pe = (PythonException)exception;
 
-            var startIndex = pe.Message.LastIndexOfInvariant(" ");
-            var methodName = pe.Message.Substring(startIndex).Trim();
-            var message = $"Trying to dynamically access a method that does not exist throws a TypeError exception. To prevent the exception, ensure each parameter type matches those required by the {methodName} method. Please checkout the API documentation.";
+            var methodName = GetMethodName(pe.Message);
+            var message = Messages.NoMethodMatchPythonExceptionInterpreter.AttemptedToAccessMethodThatDoesNotExist(methodName);
+
+            var overloadsHint = GetOverloadsHint(pe.Message);
+            if (!string.IsNullOrEmpty(overloadsHint))
+            {
+                message += $" {overloadsHint}";
+            }
 
             message += PythonUtil.PythonExceptionStackParser(pe.StackTrace);
 
             return new MissingMethodException(message, pe);
+        }
+
+        /// <summary>
+        /// Extracts the name of the method that failed to resolve from the Python exception message.
+        /// The message has the form: "No method matches given arguments for {methodName}: ({argumentTypes})",
+        /// so the method name sits between the "for " keyword and the following ":".
+        /// </summary>
+        private static string GetMethodName(string exceptionMessage)
+        {
+            const string forKeyword = "for ";
+            var forIndex = exceptionMessage.IndexOfInvariant(forKeyword);
+            if (forIndex == -1)
+            {
+                // Unexpected format, fall back to the whole message
+                return exceptionMessage.Trim();
+            }
+
+            var methodNameStart = forIndex + forKeyword.Length;
+            var colonIndex = exceptionMessage.IndexOf(':', methodNameStart);
+            var methodName = colonIndex > methodNameStart
+                ? exceptionMessage.Substring(methodNameStart, colonIndex - methodNameStart)
+                : exceptionMessage.Substring(methodNameStart);
+
+            return methodName.Trim();
+        }
+
+        /// <summary>
+        /// Extracts the candidate-signatures hint pythonnet appends to the binding-failure
+        /// message ("The expected signature is:" or "The following overloads are available:"
+        /// followed by the signatures), so the interpreted message can keep it.
+        /// </summary>
+        private static string GetOverloadsHint(string exceptionMessage)
+        {
+            var hintIndex = exceptionMessage.IndexOfInvariant("The expected signature is:");
+            if (hintIndex == -1)
+            {
+                hintIndex = exceptionMessage.IndexOfInvariant("The following overloads are available:");
+            }
+
+            return hintIndex == -1 ? null : exceptionMessage.Substring(hintIndex).Trim();
         }
     }
 }

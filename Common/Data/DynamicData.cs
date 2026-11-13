@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Dynamic;
 using System.Linq.Expressions;
 using System.Reflection;
+using Python.Runtime;
 using QuantConnect.Util;
 
 namespace QuantConnect.Data
@@ -31,6 +32,7 @@ namespace QuantConnect.Data
         private static readonly MethodInfo SetPropertyMethodInfo = typeof(DynamicData).GetMethod("SetProperty");
         private static readonly MethodInfo GetPropertyMethodInfo = typeof(DynamicData).GetMethod("GetProperty");
 
+        private readonly IDictionary<string, object> _snakeNameStorage = new Dictionary<string, object>();
         private readonly IDictionary<string, object> _storage = new Dictionary<string, object>();
 
         /// <summary>
@@ -42,24 +44,51 @@ namespace QuantConnect.Data
         }
 
         /// <summary>
-        /// Sets the property with the specified name to the value. This is a case-insensitve search.
+        /// Sets the property with the specified name to the value. This is a case-insensitive search.
         /// </summary>
         /// <param name="name">The property name to set</param>
         /// <param name="value">The new property value</param>
         /// <returns>Returns the input value back to the caller</returns>
         public object SetProperty(string name, object value)
         {
-            name = name.ToLowerInvariant();
+            // let's be polite and support snake name access for the given object value too
+            var snakeName = name.ToSnakeCase();
+            name = name.LazyToLower();
 
             if (name == "time")
             {
-                Time = (DateTime)value;
+                if (value is PyObject pyobject)
+                {
+                    Time = ConvertPropertyValue<DateTime>(pyobject, name);
+                }
+                else
+                {
+                    Time = (DateTime)value;
+                }
             }
-            if (name == "value")
+            else if (name == "endtime" || name == "end_time")
             {
-                Value = (decimal)value;
+                if (value is PyObject pyobject)
+                {
+                    EndTime = ConvertPropertyValue<DateTime>(pyobject, name);
+                }
+                else
+                {
+                    EndTime = (DateTime)value;
+                }
             }
-            if (name == "symbol")
+            else if (name == "value")
+            {
+                if (value is PyObject pyobject)
+                {
+                    Value = ConvertPropertyValue<decimal>(pyobject, name);
+                }
+                else
+                {
+                    Value = (decimal)value;
+                }
+            }
+            else if (name == "symbol")
             {
                 if (value is string)
                 {
@@ -67,20 +96,27 @@ namespace QuantConnect.Data
                 }
                 else
                 {
-                    Symbol = (Symbol) value;
+                    if (value is PyObject pyobject)
+                    {
+                        Symbol = ConvertPropertyValue<Symbol>(pyobject, name);
+                    }
+                    else
+                    {
+                        Symbol = (Symbol)value;
+                    }
                 }
             }
-            // reaodnly
-            //if (name == "Price")
-            //{
-            //    return Price = (decimal) value;
-            //}
+
             _storage[name] = value;
+            if (snakeName != name)
+            {
+                _snakeNameStorage[snakeName] = value;
+            }
             return value;
         }
 
         /// <summary>
-        /// Gets the property's value with the specified name. This is a case-insensitve search.
+        /// Gets the property's value with the specified name. This is a case-insensitive search.
         /// </summary>
         /// <param name="name">The property name to access</param>
         /// <returns>object value of BaseData</returns>
@@ -92,6 +128,10 @@ namespace QuantConnect.Data
             if (name == "time")
             {
                 return Time;
+            }
+            if (name == "endtime")
+            {
+                return EndTime;
             }
             if (name == "value")
             {
@@ -107,7 +147,7 @@ namespace QuantConnect.Data
             }
 
             object value;
-            if (!_storage.TryGetValue(name, out value))
+            if (!_storage.TryGetValue(name, out value) && !_snakeNameStorage.TryGetValue(name, out value))
             {
                 // let the user know the property name that we couldn't find
                 throw new KeyNotFoundException(
@@ -120,7 +160,7 @@ namespace QuantConnect.Data
 
         /// <summary>
         /// Gets whether or not this dynamic data instance has a property with the specified name.
-        /// This is a case-insensitve search.
+        /// This is a case-insensitive search.
         /// </summary>
         /// <param name="name">The property name to check for</param>
         /// <returns>True if the property exists, false otherwise</returns>
@@ -133,7 +173,7 @@ namespace QuantConnect.Data
         /// Gets the storage dictionary
         /// Python algorithms need this information since DynamicMetaObject does not work
         /// </summary>
-        /// <returns>Dictionary that stores the paramenters names and values</returns>
+        /// <returns>Dictionary that stores the parameters names and values</returns>
         public IDictionary<string, object> GetStorageDictionary()
         {
             return _storage;
@@ -155,6 +195,23 @@ namespace QuantConnect.Data
                 clone._storage.Add(kvp);
             }
             return clone;
+        }
+
+        /// <summary>
+        /// Converts the given Python value into the type expected by the reserved property with the given name
+        /// </summary>
+        private static T ConvertPropertyValue<T>(PyObject value, string name)
+        {
+            try
+            {
+                return value.As<T>();
+            }
+            catch (InvalidCastException exception)
+            {
+                throw new ArgumentException(
+                    $"Unable to set the '{name}' property from {value.ToDisplayString()}: it is not a supported {typeof(T).Name} value.",
+                    exception);
+            }
         }
     }
 }

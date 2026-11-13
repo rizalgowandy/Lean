@@ -18,11 +18,13 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
+using QuantConnect.Brokerages;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Interfaces;
-using QuantConnect.Lean.Engine.TransactionHandlers;
 using QuantConnect.Orders;
 using QuantConnect.Packets;
+using QuantConnect.Util;
+using QuantConnect.Statistics;
 
 namespace QuantConnect.Lean.Engine.Results
 {
@@ -31,7 +33,7 @@ namespace QuantConnect.Lean.Engine.Results
     /// Backtester or the Live trading platform:
     /// </summary>
     [InheritedExport(typeof(IResultHandler))]
-    public interface IResultHandler
+    public interface IResultHandler : IStatisticsService
     {
         /// <summary>
         /// Put messages to process into the queue so they are processed by this thread.
@@ -43,7 +45,7 @@ namespace QuantConnect.Lean.Engine.Results
         }
 
         /// <summary>
-        /// Boolean flag indicating the result hander thread is busy.
+        /// Boolean flag indicating the result handler thread is busy.
         /// False means it has completely finished and ready to dispose.
         /// </summary>
         bool IsActive
@@ -57,13 +59,16 @@ namespace QuantConnect.Lean.Engine.Results
         void OnSecuritiesChanged(SecurityChanges changes);
 
         /// <summary>
+        /// Event fired when the algorithm's warm-up period finishes, right before the algorithm's
+        /// <see cref="IAlgorithm.OnWarmupFinished"/> callback is triggered
+        /// </summary>
+        void OnWarmupFinished();
+
+        /// <summary>
         /// Initialize the result handler with this result packet.
         /// </summary>
-        /// <param name="job">Algorithm job packet for this result handler</param>
-        /// <param name="messagingHandler">The messaging handler provider to use</param>
-        /// <param name="api">The api implementation to use</param>
-        /// <param name="transactionHandler"></param>
-        void Initialize(AlgorithmNodePacket job, IMessagingHandler messagingHandler, IApi api, ITransactionHandler transactionHandler);
+        /// <param name="parameters">DTO parameters class to initialize a result handler</param>
+        void Initialize(ResultHandlerInitializeParameters parameters);
 
         /// <summary>
         /// Process debug messages with the preconfigured settings.
@@ -104,11 +109,17 @@ namespace QuantConnect.Lean.Engine.Results
         void RuntimeError(string message, string stacktrace = "");
 
         /// <summary>
-        /// Method to attempt to update the <see cref="IResultHandler"/> with various performance metrics.
+        /// Process brokerage message events
+        /// </summary>
+        /// <param name="brokerageMessageEvent">The brokerage message event</param>
+        void BrokerageMessage(BrokerageMessageEvent brokerageMessageEvent);
+
+        /// <summary>
+        /// Method to update the <see cref="IResultHandler"/> with various performance metrics.
+        /// Called once a day by scheduled event in AlgorithmManager
         /// </summary>
         /// <param name="time">Current time</param>
-        /// <param name="force">Forces a sampling event if true</param>
-        void Sample(DateTime time, bool force = false);
+        void Sample(DateTime time);
 
         /// <summary>
         /// Set the algorithm of the result handler after its been initialized.
@@ -116,12 +127,6 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="algorithm">Algorithm object matching IAlgorithm interface</param>
         /// <param name="startingPortfolioValue">Algorithm starting capital for statistics calculations</param>
         void SetAlgorithm(IAlgorithm algorithm, decimal startingPortfolioValue);
-
-        /// <summary>
-        /// Sets the current alpha runtime statistics
-        /// </summary>
-        /// <param name="statistics">The current alpha runtime statistics</param>
-        void SetAlphaRuntimeStatistics(AlphaRuntimeStatistics statistics);
 
         /// <summary>
         /// Send a algorithm status update to the user of the algorithms running state.
@@ -136,6 +141,20 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="key">Runtime headline statistic name</param>
         /// <param name="value">Runtime headline statistic value</param>
         void RuntimeStatistic(string key, string value);
+
+        /// <summary>
+        /// Adds or updates a deployment detail entry. Key value pairs the brokerage, data queue handler or any other component
+        /// wants to share with the user, through the results, and the algorithm, for example account information.
+        /// Sensitive data, like credentials, should never be added
+        /// </summary>
+        /// <param name="key">The deployment detail key</param>
+        /// <param name="value">The deployment detail value</param>
+        void AddDeploymentDetail(string key, string value);
+
+        /// <summary>
+        /// Read only view of the deployment details, see <see cref="AddDeploymentDetail"/>. Shared with the algorithm
+        /// </summary>
+        ReadOnlyExtendedDictionary<string, string> DeploymentDetails { get; }
 
         /// <summary>
         /// Send a new order event.
@@ -159,5 +178,17 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="name">The name of the results</param>
         /// <param name="result">The results to save</param>
         void SaveResults(string name, Result result);
+
+        /// <summary>
+        /// Handles updates to the algorithm's name
+        /// </summary>
+        /// <param name="name">The new name</param>
+        void AlgorithmNameUpdated(string name);
+
+        /// <summary>
+        /// Handles updates to the algorithm's tags
+        /// </summary>
+        /// <param name="tags">The new tags</param>
+        void AlgorithmTagsUpdated(HashSet<string> tags);
     }
 }

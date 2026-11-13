@@ -35,6 +35,13 @@ namespace QuantConnect.Orders
         public static readonly TimeSpan DefaultSubmissionTimeBuffer = TimeSpan.FromMinutes(15.5);
 
         /// <summary>
+        /// The interval before market close that an MOC order may be submitted.
+        /// </summary>
+        /// <remarks>Configurable so advanced users may modify this for special cases;
+        /// Related issue: Github #5481</remarks>
+        public static TimeSpan SubmissionTimeBuffer = DefaultSubmissionTimeBuffer;
+
+        /// <summary>
         /// MarketOnClose Order Type
         /// </summary>
         public override OrderType Type
@@ -43,14 +50,14 @@ namespace QuantConnect.Orders
         }
 
         /// <summary>
-        /// Intiializes a new instance of the <see cref="MarketOnCloseOrder"/> class.
+        /// Initializes a new instance of the <see cref="MarketOnCloseOrder"/> class.
         /// </summary>
         public MarketOnCloseOrder()
         {
         }
 
         /// <summary>
-        /// Intiializes a new instance of the <see cref="MarketOnCloseOrder"/> class.
+        /// Initializes a new instance of the <see cref="MarketOnCloseOrder"/> class.
         /// </summary>
         /// <param name="symbol">The security's symbol being ordered</param>
         /// <param name="quantity">The number of units to order</param>

@@ -17,6 +17,7 @@ using QuantConnect.Data;
 using QuantConnect.Orders;
 using QuantConnect.Orders.Fills;
 using QuantConnect.Securities;
+using QuantConnect.Interfaces;
 using System;
 using System.Collections.Generic;
 
@@ -27,7 +28,7 @@ namespace QuantConnect.Algorithm.CSharp
     /// </summary>
     /// <meta name="tag" content="transaction fees and slippage" />
     /// <meta name="tag" content="custom fill models" />
-    public class CustomPartialFillModelAlgorithm : QCAlgorithm
+    public class CustomPartialFillModelAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
         private Symbol _spy;
         private SecurityHolding _holdings;
@@ -45,14 +46,14 @@ namespace QuantConnect.Algorithm.CSharp
             equity.SetFillModel(new CustomPartialFillModel(this));
         }
 
-        public override void OnData(Slice data)
+        public override void OnData(Slice slice)
         {
             var openOrders = Transactions.GetOpenOrders(_spy);
             if (openOrders.Count != 0) return;
 
             if (Time.Day > 10 && _holdings.Quantity <= 0)
             {
-                MarketOrder(_spy, 100, true);
+                MarketOrder(_spy, 105, true);
             }
             else if (Time.Day > 20 && _holdings.Quantity >= 0)
             {
@@ -86,23 +87,83 @@ namespace QuantConnect.Algorithm.CSharp
                 // Create the object
                 var fill = base.MarketFill(asset, order);
 
-                // Set this fill amount
-                fill.FillQuantity = Math.Sign(order.Quantity) * 10;
-
-                if (absoluteRemaining == fill.FillQuantity)
+                // Set the fill amount
+                fill.FillQuantity = Math.Sign(order.Quantity) * 10m;
+                if (Math.Min(Math.Abs(fill.FillQuantity), absoluteRemaining) == absoluteRemaining)
                 {
+                    fill.FillQuantity = Math.Sign(order.Quantity) * absoluteRemaining;
                     fill.Status = OrderStatus.Filled;
                     _absoluteRemainingByOrderId.Remove(order.Id);
                 }
                 else
                 {
                     fill.Status = OrderStatus.PartiallyFilled;
-                    _absoluteRemainingByOrderId[order.Id] = absoluteRemaining - fill.FillQuantity;
+                    _absoluteRemainingByOrderId[order.Id] = absoluteRemaining - Math.Abs(fill.FillQuantity);
                     var price = fill.FillPrice;
-                    _algorithm.Debug($"{_algorithm.Time} - Partial Fill - Remaining {absoluteRemaining} Price - {price}");
+                    //_algorithm.Debug($"{_algorithm.Time} - Partial Fill - Remaining {_absoluteRemainingByOrderId[order.Id]} Price - {price}");
                 }
                 return fill;
             }
         }
+
+        /// <summary>
+        /// This is used by the regression test system to indicate if the open source Lean repository has the required data to run this algorithm.
+        /// </summary>
+        public bool CanRunLocally { get; } = true;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate which languages this algorithm is written in.
+        /// </summary>
+        public List<Language> Languages { get; } = new() { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// Data Points count of all timeslices of algorithm
+        /// </summary>
+        public long DataPoints => 582;
+
+        /// <summary>
+        /// Data Points count of the algorithm history
+        /// </summary>
+        public int AlgorithmHistoryDataPoints => 0;
+
+        /// <summary>
+        /// Final status of the algorithm
+        /// </summary>
+        public AlgorithmStatus AlgorithmStatus => AlgorithmStatus.Completed;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
+        /// </summary>
+        public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
+        {
+            {"Total Orders", "24"},
+            {"Average Win", "0.02%"},
+            {"Average Loss", "-0.01%"},
+            {"Compounding Annual Return", "3.812%"},
+            {"Drawdown", "0.500%"},
+            {"Expectancy", "0.441"},
+            {"Start Equity", "100000"},
+            {"End Equity", "100613.39"},
+            {"Net Profit", "0.613%"},
+            {"Sharpe Ratio", "-0.227"},
+            {"Sortino Ratio", "-0.24"},
+            {"Probabilistic Sharpe Ratio", "27.509%"},
+            {"Loss Rate", "42%"},
+            {"Win Rate", "58%"},
+            {"Profit-Loss Ratio", "1.47"},
+            {"Alpha", "-0.035"},
+            {"Beta", "0.052"},
+            {"Annual Standard Deviation", "0.015"},
+            {"Annual Variance", "0"},
+            {"Information Ratio", "-5.449"},
+            {"Tracking Error", "0.114"},
+            {"Treynor Ratio", "-0.066"},
+            {"Total Fees", "$24.00"},
+            {"Estimated Strategy Capacity", "$89000000.00"},
+            {"Lowest Capacity Asset", "SPY R735QTJ8XC9X"},
+            {"Portfolio Turnover", "10.58%"},
+            {"Drawdown Recovery", "34"},
+            {"OrderListHash", "5f4a4ec2168d30c875fe87ff1f06bc9a"}
+        };
     }
 }

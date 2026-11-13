@@ -157,7 +157,7 @@ namespace QuantConnect.Scheduling
         }
 
         /// <summary>
-        /// Creates events that fire a specified numer of minutes before market close
+        /// Creates events that fire a specified number of minutes before market close
         /// </summary>
         IFluentSchedulingRunnable IFluentSchedulingTimeSpecifier.BeforeMarketClose(Symbol symbol, double minuteBeforeClose, bool extendedMarketClose)
         {
@@ -206,7 +206,7 @@ namespace QuantConnect.Scheduling
         {
             var name = _name ?? _dateRule.Name + ": " + _timeRule.Name;
             // back the date up to ensure we get all events, the event scheduler will skip past events that whose time has passed
-            var dates = _dateRule.GetDates(_securities.UtcTime.Date.AddDays(-1), Time.EndOfTime);
+            var dates = ScheduleManager.GetDatesDeferred(_dateRule, _securities);
             var eventTimes = _timeRule.CreateUtcEventTimes(dates);
             if (_predicate != null)
             {
@@ -368,7 +368,7 @@ namespace QuantConnect.Scheduling
         /// </summary>
         IFluentSchedulingRunnable AfterMarketOpen(Symbol symbol, double minutesAfterOpen = 0, bool extendedMarketOpen = false);
         /// <summary>
-        /// Creates events that fire a specified numer of minutes before market close
+        /// Creates events that fire a specified number of minutes before market close
         /// </summary>
         IFluentSchedulingRunnable BeforeMarketClose(Symbol symbol, double minuteBeforeClose = 0, bool extendedMarketClose = false);
     }

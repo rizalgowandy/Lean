@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -23,14 +23,15 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
     /// Defines options that influence how the matcher operates.
     /// </summary>
     /// <remarks>
-    /// Many properties in this type are not implemented in the matcher but are provided to document
-    /// the types of things that can be added to the matcher in the future as necessary. Some of the
+    /// Some properties in this type are not implemented in the matcher but are provided to document the
+    /// types of things that can be added to it in the future as necessary. <see cref="MaximumDuration"/>
+    /// and <see cref="MaximumSolutionCount"/> are not consulted anywhere: the matcher evaluates a fixed
+    /// set of candidate solutions, which keeps its result independent of how long matching takes. Further
     /// features contemplated in this class would require updating the various matching/filtering/slicing
-    /// functions to accept these options, or a particular property. This is the case for the enumerators
-    /// which would be used to prioritize which positions to try and match first. A great implementation
-    /// of the <see cref="IOptionPositionCollectionEnumerator"/> would be to yield positions with the
-    /// highest margin requirements first. At time of writing, the goal is to achieve a workable rev0,
-    /// and we can later improve the efficiency/optimization of the matching process.
+    /// functions to accept these options, or a particular property. This is the case for the position
+    /// enumerator, which would be used to prioritize which positions to try and match first: a great
+    /// implementation of the <see cref="IOptionPositionCollectionEnumerator"/> would be to yield positions
+    /// with the highest margin requirements first.
     /// </remarks>
     public class OptionStrategyMatcherOptions
     {
@@ -54,14 +55,42 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         /// <summary>
         /// The definitions to be used for matching.
         /// </summary>
+        /// <remarks>
+        /// The configured <see cref="IOptionStrategyDefinitionEnumerator"/> is consulted once and its output is
+        /// cached, so an enumerator yielding a different order on each call has only its first order honored
+        /// </remarks>
         public IEnumerable<OptionStrategyDefinition> Definitions
-            => _definitionEnumerator.Enumerate(_definitions);
+            => _enumeratedDefinitions ??= _definitionEnumerator.Enumerate(_definitions).ToList();
+
+        /// <summary>
+        /// The definitions to be used for matching, deprioritizing those leaving a short option leg uncovered
+        /// </summary>
+        public IEnumerable<OptionStrategyDefinition> CoveredShortsFirstDefinitions
+            => _coveredShortsFirstDefinitions ??= Definitions.OrderBy(definition =>
+            {
+                var (calls, puts) = GetUncoveredShortLegs(definition);
+                return calls > 0 || puts > 0;
+            }).ToList();
+
+        /// <summary>
+        /// The definitions to be used for matching, deprioritizing those leaving a short option leg uncovered and
+        /// those holding more long legs of a right than their own short legs need
+        /// </summary>
+        internal IEnumerable<OptionStrategyDefinition> BalancedLegsFirstDefinitions
+            => _balancedLegsFirstDefinitions ??= Definitions.OrderBy(definition =>
+            {
+                var (calls, puts) = GetUncoveredShortLegs(definition);
+                return calls != 0 || puts != 0;
+            }).ToList();
 
         /// <summary>
         /// Objective function used to compare different match solutions for a given set of positions/definitions
         /// </summary>
         public IOptionStrategyMatchObjectiveFunction ObjectiveFunction { get; }
 
+        private List<OptionStrategyDefinition> _enumeratedDefinitions;
+        private List<OptionStrategyDefinition> _coveredShortsFirstDefinitions;
+        private List<OptionStrategyDefinition> _balancedLegsFirstDefinitions;
         private readonly IReadOnlyList<OptionStrategyDefinition> _definitions;
         private readonly IOptionPositionCollectionEnumerator _positionEnumerator;
         private readonly IOptionStrategyDefinitionEnumerator _definitionEnumerator;
@@ -87,12 +116,15 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
 
             if (definitionEnumerator == null)
             {
-                definitionEnumerator = new IdentityOptionStrategyDefinitionEnumerator();
+                // by default we want more complex option strategies to have matching priority
+                definitionEnumerator = new DescendingByLegCountOptionStrategyDefinitionEnumerator();
             }
 
             if (objectiveFunction == null)
             {
-                objectiveFunction = new UnmatchedPositionCountOptionStrategyMatchObjectiveFunction();
+                // by default we prefer solutions minimizing the uncovered short option quantity,
+                // a proxy for the margin required to hold the resulting position groups
+                objectiveFunction = new UncoveredShortQuantityOptionStrategyMatchObjectiveFunction();
             }
 
             if (positionEnumerator == null)
@@ -117,6 +149,32 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         public int GetMaximumLegMatches(int legIndex)
         {
             return MaximumCountPerLeg[legIndex];
+        }
+
+        /// <summary>
+        /// Determines, per right, how many short option legs of the definition matched at the unit level aren't
+        /// covered by long legs of the same right or by the underlying lots the definition requires. A negative
+        /// count is a surplus of long legs. Only ever evaluated while building the cached
+        /// <see cref="CoveredShortsFirstDefinitions"/> and <see cref="BalancedLegsFirstDefinitions"/>
+        /// </summary>
+        private static (int Calls, int Puts) GetUncoveredShortLegs(OptionStrategyDefinition definition)
+        {
+            var netCalls = 0;
+            var netPuts = 0;
+            foreach (var leg in definition.Legs)
+            {
+                if (leg.Right == OptionRight.Call)
+                {
+                    netCalls += leg.Quantity;
+                }
+                else
+                {
+                    netPuts += leg.Quantity;
+                }
+            }
+
+            // long underlying lots cover short calls, short underlying lots cover short puts
+            return (-netCalls - Math.Max(0, definition.UnderlyingLots), -netPuts - Math.Max(0, -definition.UnderlyingLots));
         }
 
         /// <summary>

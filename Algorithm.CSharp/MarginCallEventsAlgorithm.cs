@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Orders;
 
@@ -24,7 +25,7 @@ namespace QuantConnect.Algorithm.CSharp
     /// <summary>
     /// This algorithm showcases two margin related event handlers.
     /// OnMarginCallWarning: Fired when a portfolio's remaining margin dips below 5% of the total portfolio value
-    /// OnMarginCall: Fired immediately before margin call orders are execued, this gives the algorithm a change to regain margin on its own through liquidation
+    /// OnMarginCall: Fired immediately before margin call orders are executed, this gives the algorithm a change to regain margin on its own through liquidation
     /// </summary>
     /// <meta name="tag" content="securities and portfolio" />
     /// <meta name="tag" content="margin models" />
@@ -48,8 +49,8 @@ namespace QuantConnect.Algorithm.CSharp
         /// <summary>
         /// OnData event is the primary entry point for your algorithm. Each new data point will be pumped in here.
         /// </summary>
-        /// <param name="data">TradeBars IDictionary object with your stock data</param>
-        public void OnData(TradeBars data)
+        /// <param name="slice">Slice object keyed by symbol containing the stock data</param>
+        public override void OnData(Slice slice)
         {
             if (!Portfolio.Invested)
             {
@@ -70,7 +71,7 @@ namespace QuantConnect.Algorithm.CSharp
             foreach (var order in requests.ToList())
             {
                 // liquidate an extra 10% each time we get a margin call to give us more padding
-                var newQuantity = (int)(Math.Sign(order.Quantity) * order.Quantity * 1.1m);
+                var newQuantity = (int)(order.Quantity * 1.1m);
                 requests.Remove(order);
                 requests.Add(new SubmitOrderRequest(order.OrderType, order.SecurityType, order.Symbol, newQuantity, order.StopPrice, order.LimitPrice, Time, "OnMarginCall"));
             }

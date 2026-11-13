@@ -1,11 +1,11 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -25,7 +25,7 @@ namespace QuantConnect.Tests.Common.Statistics
     {
         private const decimal TradeFee = 2;
         private readonly DateTime _startTime = new DateTime(2015, 08, 06, 15, 30, 0);
-        
+
         [Test]
         public void NoTrades()
         {
@@ -110,7 +110,7 @@ namespace QuantConnect.Tests.Common.Statistics
             Assert.AreEqual(2.8867513459481276450914878051m, statistics.SharpeRatio);
             Assert.AreEqual(0, statistics.SortinoRatio);
             Assert.AreEqual(10, statistics.ProfitToMaxDrawdownRatio);
-            Assert.AreEqual(-20, statistics.MaximumEndTradeDrawdown);
+            Assert.AreEqual(20, statistics.MaximumEndTradeDrawdown);
             Assert.AreEqual(-16.666666666666666666666666666m, statistics.AverageEndTradeDrawdown);
             Assert.AreEqual(TimeSpan.Zero, statistics.MaximumDrawdownDuration);
             Assert.AreEqual(6, statistics.TotalFees);
@@ -124,7 +124,7 @@ namespace QuantConnect.Tests.Common.Statistics
             {
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time,
                     EntryPrice = 1.07m,
                     Direction = TradeDirection.Long,
@@ -134,11 +134,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = 20,
                     TotalFees = TradeFee,
                     MAE = -5,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 10
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(10),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Long,
@@ -148,11 +149,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = 20,
                     TotalFees = TradeFee,
                     MAE = -30,
-                    MFE = 40
+                    MFE = 40,
+                    EndTradeDrawdown = 20
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(30),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Long,
@@ -162,7 +164,8 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = 10,
                     TotalFees = TradeFee,
                     MAE = -15,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 20
                 }
             };
         }
@@ -206,7 +209,7 @@ namespace QuantConnect.Tests.Common.Statistics
             Assert.AreEqual(-2.8867513459481276450914878051m, statistics.SharpeRatio);
             Assert.AreEqual(-2.8867513459481276450914878051m, statistics.SortinoRatio);
             Assert.AreEqual(-1, statistics.ProfitToMaxDrawdownRatio);
-            Assert.AreEqual(-50, statistics.MaximumEndTradeDrawdown);
+            Assert.AreEqual(50, statistics.MaximumEndTradeDrawdown);
             Assert.AreEqual(-33.333333333333333333333333334m, statistics.AverageEndTradeDrawdown);
             Assert.AreEqual(TimeSpan.Zero, statistics.MaximumDrawdownDuration);
             Assert.AreEqual(6, statistics.TotalFees);
@@ -220,7 +223,7 @@ namespace QuantConnect.Tests.Common.Statistics
             {
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time,
                     EntryPrice = 1.07m,
                     Direction = TradeDirection.Short,
@@ -230,11 +233,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -20,
                     TotalFees = TradeFee,
                     MAE = -30,
-                    MFE = 5
+                    MFE = 5,
+                    EndTradeDrawdown = 25
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(10),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Short,
@@ -244,11 +248,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -20,
                     TotalFees = TradeFee,
                     MAE = -40,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 50
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(30),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Short,
@@ -258,7 +263,8 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -10,
                     TotalFees = TradeFee,
                     MAE = -30,
-                    MFE = 15
+                    MFE = 15,
+                    EndTradeDrawdown = 25
                 }
             };
         }
@@ -302,7 +308,7 @@ namespace QuantConnect.Tests.Common.Statistics
             Assert.AreEqual(-0.5773502691896248623516308943m, statistics.SharpeRatio);
             Assert.AreEqual(0, statistics.SortinoRatio);
             Assert.AreEqual(-0.75m, statistics.ProfitToMaxDrawdownRatio);
-            Assert.AreEqual(-50, statistics.MaximumEndTradeDrawdown);
+            Assert.AreEqual(50, statistics.MaximumEndTradeDrawdown);
             Assert.AreEqual(-31.666666666666666666666666666667m, statistics.AverageEndTradeDrawdown);
             Assert.AreEqual(TimeSpan.Zero, statistics.MaximumDrawdownDuration);
             Assert.AreEqual(6, statistics.TotalFees);
@@ -316,7 +322,7 @@ namespace QuantConnect.Tests.Common.Statistics
             {
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time,
                     EntryPrice = 1.07m,
                     Direction = TradeDirection.Short,
@@ -326,11 +332,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -20,
                     TotalFees = TradeFee,
                     MAE = -30,
-                    MFE = 5
+                    MFE = 5,
+                    EndTradeDrawdown = 30
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(10),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Short,
@@ -340,11 +347,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -20,
                     TotalFees = TradeFee,
                     MAE = -40,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 50
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(30),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Long,
@@ -354,7 +362,8 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = 10,
                     TotalFees = TradeFee,
                     MAE = -15,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 20
                 }
             };
         }
@@ -398,7 +407,7 @@ namespace QuantConnect.Tests.Common.Statistics
             Assert.AreEqual(-0.5773502691896248623516308943m, statistics.SharpeRatio);
             Assert.AreEqual(0, statistics.SortinoRatio);
             Assert.AreEqual(-0.75m, statistics.ProfitToMaxDrawdownRatio);
-            Assert.AreEqual(-50, statistics.MaximumEndTradeDrawdown);
+            Assert.AreEqual(50, statistics.MaximumEndTradeDrawdown);
             Assert.AreEqual(-31.666666666666666666666666666667m, statistics.AverageEndTradeDrawdown);
             Assert.AreEqual(TimeSpan.Zero, statistics.MaximumDrawdownDuration);
             Assert.AreEqual(6, statistics.TotalFees);
@@ -412,7 +421,7 @@ namespace QuantConnect.Tests.Common.Statistics
             {
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time,
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Long,
@@ -422,11 +431,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = 10,
                     TotalFees = TradeFee,
                     MAE = -15,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 20
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(20),
                     EntryPrice = 1.07m,
                     Direction = TradeDirection.Short,
@@ -436,11 +446,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -20,
                     TotalFees = TradeFee,
                     MAE = -30,
-                    MFE = 5
+                    MFE = 5,
+                    EndTradeDrawdown = 25
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(30),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Short,
@@ -450,7 +461,8 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -20,
                     TotalFees = TradeFee,
                     MAE = -40,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 50
                 }
             };
         }
@@ -494,7 +506,7 @@ namespace QuantConnect.Tests.Common.Statistics
             Assert.AreEqual(0.1601281538050873438895842626m, statistics.SharpeRatio);
             Assert.AreEqual(0, statistics.SortinoRatio);
             Assert.AreEqual(0.5m, statistics.ProfitToMaxDrawdownRatio);
-            Assert.AreEqual(-25, statistics.MaximumEndTradeDrawdown);
+            Assert.AreEqual(25, statistics.MaximumEndTradeDrawdown);
             Assert.AreEqual(-18.333333333333333333333333334m, statistics.AverageEndTradeDrawdown);
             Assert.AreEqual(TimeSpan.FromMinutes(40), statistics.MaximumDrawdownDuration);
             Assert.AreEqual(6, statistics.TotalFees);
@@ -508,7 +520,7 @@ namespace QuantConnect.Tests.Common.Statistics
             {
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time,
                     EntryPrice = 1.07m,
                     Direction = TradeDirection.Short,
@@ -518,11 +530,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = -20,
                     TotalFees = TradeFee,
                     MAE = -30,
-                    MFE = 5
+                    MFE = 5,
+                    EndTradeDrawdown = 25
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(10),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Long,
@@ -532,11 +545,12 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = 20,
                     TotalFees = TradeFee,
                     MAE = -40,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 10
                 },
                 new Trade
                 {
-                    Symbol = Symbols.EURUSD,
+                    Symbols =[Symbols.EURUSD],
                     EntryTime = time.AddMinutes(30),
                     EntryPrice = 1.08m,
                     Direction = TradeDirection.Long,
@@ -546,11 +560,110 @@ namespace QuantConnect.Tests.Common.Statistics
                     ProfitLoss = 10,
                     TotalFees = TradeFee,
                     MAE = -15,
-                    MFE = 30
+                    MFE = 30,
+                    EndTradeDrawdown = 20
                 }
             };
         }
 
+        [Test]
+        public void ITMOptionAssignment([Values] bool win)
+        {
+            var statistics = new TradeStatistics(CreateITMOptionAssignment(win));
 
+            if (win)
+            {
+                Assert.AreEqual(2, statistics.NumberOfWinningTrades);
+                Assert.AreEqual(0, statistics.NumberOfLosingTrades);
+                Assert.AreEqual(2, statistics.MaxConsecutiveWinningTrades);
+                Assert.AreEqual(0, statistics.MaxConsecutiveLosingTrades);
+                Assert.AreEqual(10, statistics.WinLossRatio);
+                Assert.AreEqual(1m, statistics.WinRate);
+                Assert.AreEqual(0m, statistics.LossRate);
+            }
+            else
+            {
+                Assert.AreEqual(1, statistics.NumberOfWinningTrades);
+                Assert.AreEqual(1, statistics.NumberOfLosingTrades);
+                Assert.AreEqual(1, statistics.MaxConsecutiveWinningTrades);
+                Assert.AreEqual(1, statistics.MaxConsecutiveLosingTrades);
+                Assert.AreEqual(1m, statistics.WinLossRatio);
+                Assert.AreEqual(0.5m, statistics.WinRate);
+                Assert.AreEqual(0.5m, statistics.LossRate);
+            }
+
+            Assert.AreEqual(_startTime, statistics.StartDateTime);
+            Assert.AreEqual(_startTime.AddMinutes(30), statistics.EndDateTime);
+            Assert.AreEqual(2, statistics.TotalNumberOfTrades);
+            Assert.AreEqual(28000m, statistics.TotalProfitLoss);
+            Assert.AreEqual(108000m, statistics.TotalProfit);
+            Assert.AreEqual(-80000m, statistics.TotalLoss);
+            Assert.AreEqual(108000m, statistics.LargestProfit);
+            Assert.AreEqual(-80000m, statistics.LargestLoss);
+            Assert.AreEqual(14000m, statistics.AverageProfitLoss);
+            Assert.AreEqual(108000m, statistics.AverageProfit);
+            Assert.AreEqual(-80000m, statistics.AverageLoss);
+            Assert.AreEqual(TimeSpan.FromMinutes(15), statistics.AverageTradeDuration);
+            Assert.AreEqual(TimeSpan.FromMinutes(10), statistics.AverageWinningTradeDuration);
+            Assert.AreEqual(TimeSpan.FromMinutes(20), statistics.AverageLosingTradeDuration);
+            Assert.AreEqual(1.35m, statistics.ProfitLossRatio);
+            Assert.AreEqual(-40000m, statistics.AverageMAE);
+            Assert.AreEqual(54000m, statistics.AverageMFE);
+            Assert.AreEqual(-80000, statistics.LargestMAE);
+            Assert.AreEqual(108000, statistics.LargestMFE);
+            Assert.AreEqual(-80000, statistics.MaximumClosedTradeDrawdown);
+            Assert.AreEqual(-108000, statistics.MaximumIntraTradeDrawdown);
+            Assert.AreEqual(132936.074863071m, statistics.ProfitLossStandardDeviation);
+            Assert.AreEqual(0m, statistics.ProfitLossDownsideDeviation);
+            Assert.AreEqual(1.35m, statistics.ProfitFactor);
+            Assert.AreEqual(0.1053137759214006433027413265m, statistics.SharpeRatio);
+            Assert.AreEqual(0m, statistics.SortinoRatio);
+            Assert.AreEqual(0.35m, statistics.ProfitToMaxDrawdownRatio);
+            Assert.AreEqual(80000, statistics.MaximumEndTradeDrawdown);
+            Assert.AreEqual(-40000m, statistics.AverageEndTradeDrawdown);
+            Assert.AreEqual(TimeSpan.FromMinutes(30), statistics.MaximumDrawdownDuration);
+            Assert.AreEqual(4, statistics.TotalFees);
+        }
+
+        private IEnumerable<Trade> CreateITMOptionAssignment(bool win)
+        {
+            var time = _startTime;
+
+            return new List<Trade>
+            {
+                new Trade
+                {
+                    Symbols = [Symbols.SPY_C_192_Feb19_2016],
+                    EntryTime = time,
+                    EntryPrice = 80m,
+                    Direction = TradeDirection.Long,
+                    Quantity = 10,
+                    ExitTime = time.AddMinutes(20),
+                    ExitPrice = 0m,
+                    ProfitLoss = -80000m,
+                    TotalFees = TradeFee,
+                    MAE = -80000m,
+                    MFE = 0,
+                    EndTradeDrawdown = 80000m,
+                    IsWin = win,
+                },
+                new Trade
+                {
+                    Symbols =[Symbols.SPY],
+                    EntryTime = time.AddMinutes(20),
+                    EntryPrice = 192m,
+                    Direction = TradeDirection.Long,
+                    Quantity = 1000,
+                    ExitTime = time.AddMinutes(30),
+                    ExitPrice = 300m,
+                    ProfitLoss = 108000m,
+                    TotalFees = TradeFee,
+                    MAE = 0,
+                    MFE = 108000m,
+                    EndTradeDrawdown = 0m,
+                    IsWin = true,
+                },
+            };
+        }
     }
 }

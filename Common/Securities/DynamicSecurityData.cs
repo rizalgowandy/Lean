@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -130,7 +130,7 @@ namespace QuantConnect.Securities
         }
 
         /// <summary>
-        /// Sets the property with the specified name to the value. This is a case-insensitve search.
+        /// Sets the property with the specified name to the value. This is a case-insensitive search.
         /// </summary>
         /// <param name="name">The property name to set</param>
         /// <param name="value">The new property value</param>
@@ -138,11 +138,11 @@ namespace QuantConnect.Securities
         [Obsolete("DynamicSecurityData is a view of the SecurityCache. It is readonly, properties can not be set")]
         public object SetProperty(string name, object value)
         {
-            throw new InvalidOperationException("DynamicSecurityData is a view of the SecurityCache. It is readonly, properties can not be set");
+            throw new InvalidOperationException(Messages.DynamicSecurityData.PropertiesCannotBeSet);
         }
 
         /// <summary>
-        /// Gets the property's value with the specified name. This is a case-insensitve search.
+        /// Gets the property's value with the specified name. This is a case-insensitive search.
         /// </summary>
         /// <param name="name">The property name to access</param>
         /// <returns>object value of BaseData</returns>
@@ -163,7 +163,7 @@ namespace QuantConnect.Securities
                 return Activator.CreateInstance(listType);
             }
 
-            throw new KeyNotFoundException($"Property with name '{name}' does not exist.");
+            throw new KeyNotFoundException(Messages.DynamicSecurityData.PropertyNotFound(name));
         }
 
         /// <summary>
@@ -194,10 +194,7 @@ namespace QuantConnect.Securities
                 return list;
             }
 
-            throw new InvalidOperationException(
-                $"Expected a list with type '{type.GetBetterTypeName()}' " +
-                $"but found type '{data.GetType().GetBetterTypeName()}"
-            );
+            throw new InvalidOperationException(Messages.DynamicSecurityData.UnexpectedTypesForGetAll(type, data));
         }
 
         private Type GetGenericListType(Type type)

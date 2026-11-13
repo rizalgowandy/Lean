@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -21,7 +21,7 @@ using QuantConnect.Util;
 
 namespace QuantConnect.Tests.Common
 {
-    [TestFixture]
+    [TestFixture, Parallelizable(ParallelScope.All)]
     public class IsolatorTests
     {
         [Test]
@@ -43,6 +43,39 @@ namespace QuantConnect.Tests.Common
                 Assert.IsTrue(result);
                 Assert.IsTrue(executed);
             }
+        }
+
+        [Test]
+        public void Cancellation()
+        {
+            var isolator = new Isolator();
+            var executed = false;
+            var ended = false;
+            var canceled = false;
+            var result = false;
+            try
+            {
+                result = isolator.ExecuteWithTimeLimit(
+                    TimeSpan.FromSeconds(5),
+                    () => {
+                        executed = true;
+                        // cancel only once the code block is running so the task can't be canceled before it starts
+                        isolator.CancellationTokenSource.CancelAfter(TimeSpan.FromMilliseconds(100));
+                        Thread.Sleep(5000);
+                        ended = true;
+                    },
+                    5000,
+                    sleepIntervalMillis: 10
+                );
+            }
+            catch (OperationCanceledException)
+            {
+                canceled = true;
+            }
+            Assert.IsTrue(canceled);
+            Assert.IsFalse(result);
+            Assert.IsTrue(executed);
+            Assert.IsFalse(ended);
         }
 
         [TestCase(Language.Python, true)]

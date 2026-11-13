@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -34,14 +34,21 @@ namespace QuantConnect.Data.UniverseSelection
         /// <summary>
         /// The decorated universe instance
         /// </summary>
-        protected readonly Universe Universe;
+        protected Universe Universe { get; init; }
 
         /// <summary>
         /// Gets the settings used for subscriptions added for this universe
         /// </summary>
         public override UniverseSettings UniverseSettings
         {
-            get { return Universe.UniverseSettings; }
+            get
+            {
+                return Universe.UniverseSettings;
+            }
+            set
+            {
+                Universe.UniverseSettings = value;
+            }
         }
 
         /// <summary>
@@ -60,6 +67,22 @@ namespace QuantConnect.Data.UniverseSelection
             : base(universe.Configuration)
         {
             Universe = universe;
+        }
+
+        /// <summary>
+        /// Gets the decorated universe as the given type, unwrapping nested decorators
+        /// </summary>
+        /// <typeparam name="T">The type to look for</typeparam>
+        /// <param name="underlying">The decorated universe as the given type, if any</param>
+        /// <returns>True if the decorated universe, or one it decorates, is of the given type</returns>
+        public bool TryGetUnderlying<T>(out T underlying) where T : class
+        {
+            underlying = Universe as T;
+            if (underlying == null && Universe is UniverseDecorator decorator)
+            {
+                return decorator.TryGetUnderlying(out underlying);
+            }
+            return underlying != null;
         }
 
         /// <summary>

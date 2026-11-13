@@ -195,11 +195,11 @@ namespace QuantConnect.Algorithm.CSharp.Alphas
             private const int _numberOfSymbolsFine = 20;
             private const int _numberOfSymbolsInPortfolio = 10;
             private int _lastMonth = -1;
-            private Dictionary<Symbol, decimal> _dollarVolumeBySymbol;
+            private Dictionary<Symbol, double> _dollarVolumeBySymbol;
 
             public GreenBlattMagicFormulaUniverseSelectionModel() : base(true)
             {
-                _dollarVolumeBySymbol = new Dictionary<Symbol, decimal>();
+                _dollarVolumeBySymbol = new ();
             }
 
             /// <summary>
@@ -235,17 +235,18 @@ namespace QuantConnect.Algorithm.CSharp.Alphas
             /// At least half a year since its initial public offering
             /// The stock's market cap must be greater than 500 million
             ///
-            /// Magic Formula: Rank stocks by Enterprise Value to EBITDA(EV/EBITDA)
-            /// Rank subset of previously ranked stocks(EV/EBITDA), using the valuation ratio Return on Assets(ROA)
+            /// Magic Formula: Rank stocks by Enterprise Value to EBITDA(EV/EBITDA), the lowest first
+            /// Rank the same stocks by the valuation ratio Return on Assets(ROA), the highest first
+            /// Select the stocks with the lowest sum of both ranks
             /// </summary>
             public override IEnumerable<Symbol> SelectFine(QCAlgorithm algorithm, IEnumerable<FineFundamental> fine)
             {
                 var filteredFine =
                     from x in fine
                     where x.CompanyReference.CountryId == "USA"
-                    where x.CompanyReference.PrimaryExchangeID == "NYS" || x.CompanyReference.PrimaryExchangeID == "NAS"
+                    where x.CompanyReference.PrimaryExchangeID is "NYS" or "NYSE" or "NAS"
                     where (algorithm.Time - x.SecurityReference.IPODate).TotalDays > 180
-                    where x.EarningReports.BasicAverageShares.ThreeMonths * x.EarningReports.BasicEPS.TwelveMonths * x.ValuationRatios.PERatio > 5e8m
+                    where x.EarningReports.BasicAverageShares.ThreeMonths * x.EarningReports.BasicEPS.TwelveMonths * x.ValuationRatios.PERatio > 5e8
                     select x;
 
                 double count = filteredFine.Count();
@@ -270,18 +271,24 @@ namespace QuantConnect.Algorithm.CSharp.Alphas
                     )
                     .ToDictionary(x => x.Key, x => x.Value);
 
-                // Stocks in QC500 universe
-                var topFine = myDict.Values.SelectMany(x => x);
+                // Stocks in QC500 universe that have both Magic Formula ratios
+                var topFine = myDict.Values
+                    .SelectMany(x => x)
+                    .Where(x => !double.IsNaN(x.ValuationRatios.EVToEBITDA) && !double.IsNaN(x.ValuationRatios.ForwardROA))
+                    .ToList();
 
                 // Magic Formula:
-                // Rank stocks by Enterprise Value to EBITDA (EV/EBITDA)
-                // Rank subset of previously ranked stocks (EV/EBITDA), using the valuation ratio Return on Assets (ROA)
+                // Rank stocks by Enterprise Value to EBITDA (EV/EBITDA), the lowest ratio ranking first
+                // Rank stocks by the valuation ratio Return on Assets (ROA), the highest ratio ranking first
+                // Select the stocks with the lowest combined rank
+                // Stocks with equal ratios share the best rank among them, and equal combined ranks are ordered by symbol,
+                // so the selection doesn't depend on the order of the candidates
+                var sortedEVToEBITDA = topFine.Select(x => x.ValuationRatios.EVToEBITDA).OrderBy(x => x).ToList();
+                var sortedROA = topFine.Select(x => x.ValuationRatios.ForwardROA).OrderByDescending(x => x).ToList();
+
                 return topFine
-                    // Sort stocks in the security universe of QC500 based on Enterprise Value to EBITDA valuation ratio
-                    .OrderByDescending(x => x.ValuationRatios.EVToEBITDA)
-                    .Take(_numberOfSymbolsFine)
-                    // sort subset of stocks that have been sorted by Enterprise Value to EBITDA, based on the valuation ratio Return on Assets (ROA)
-                    .OrderByDescending(x => x.ValuationRatios.ForwardROA)
+                    .OrderBy(x => sortedEVToEBITDA.IndexOf(x.ValuationRatios.EVToEBITDA) + sortedROA.IndexOf(x.ValuationRatios.ForwardROA))
+                    .ThenBy(x => x.Symbol.ID.ToString(), StringComparer.Ordinal)
                     .Take(_numberOfSymbolsInPortfolio)
                     .Select(x => x.Symbol);
             }

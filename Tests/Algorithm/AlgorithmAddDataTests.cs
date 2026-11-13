@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -19,16 +19,16 @@ using System.Linq;
 using Newtonsoft.Json;
 using NodaTime;
 using NUnit.Framework;
+using Python.Runtime;
 using QuantConnect.Algorithm;
+using QuantConnect.Algorithm.Framework.Selection;
 using QuantConnect.Algorithm.Selection;
 using QuantConnect.AlgorithmFactory.Python.Wrappers;
 using QuantConnect.Configuration;
 using QuantConnect.Data;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Data.Consolidators;
-using QuantConnect.Data.Custom;
-using QuantConnect.Data.Custom.Tiingo;
-using QuantConnect.Data.Custom.TradingEconomics;
+using QuantConnect.Data.Custom.IconicTypes;
 using QuantConnect.Data.Market;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Lean.Engine.DataFeeds;
@@ -46,29 +46,34 @@ namespace QuantConnect.Tests.Algorithm
         [Test]
         public void DefaultDataFeeds_CanBeOverwritten_Successfully()
         {
-            Config.Set("security-data-feeds", "{ Forex: [\"Trade\"] }");
             var algo = new QCAlgorithm();
             algo.SubscriptionManager.SetDataManager(new DataManagerStub(algo));
 
-            // forex defult - should be tradebar
+            // forex defult - should be quotebar
             var forexTrade = algo.AddForex("EURUSD");
             Assert.IsTrue(forexTrade.Subscriptions.Count() == 1);
-            Assert.IsTrue(GetMatchingSubscription(forexTrade, typeof(QuoteBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, forexTrade.Symbol, typeof(QuoteBar)) != null);
 
             // Change
+            Config.Set("security-data-feeds", "{ Forex: [\"Trade\"] }");
             var dataFeedsConfigString = Config.Get("security-data-feeds");
             Dictionary<SecurityType, List<TickType>> dataFeeds = new Dictionary<SecurityType, List<TickType>>();
-            if (dataFeedsConfigString != string.Empty)
+            if (!string.IsNullOrEmpty(dataFeedsConfigString))
             {
                 dataFeeds = JsonConvert.DeserializeObject<Dictionary<SecurityType, List<TickType>>>(dataFeedsConfigString);
             }
 
             algo.SetAvailableDataTypes(dataFeeds);
 
-            // new forex - should be quotebar
+            // new forex - should be tradebar
             var forexQuote = algo.AddForex("EURUSD");
-            Assert.IsTrue(forexQuote.Subscriptions.Count() == 1);
-            Assert.IsTrue(GetMatchingSubscription(forexQuote, typeof(TradeBar)) != null);
+            // The quote bar subscription is kept
+            Assert.IsTrue(forexQuote.Subscriptions.Count() == 2);
+            Assert.IsTrue(GetMatchingSubscription(algo, forexQuote.Symbol, typeof(TradeBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, forexQuote.Symbol, typeof(QuoteBar)) != null);
+
+            // reset to empty string, affects other tests because config is static
+            Config.Set("security-data-feeds", "");
         }
 
         [Test]
@@ -80,46 +85,75 @@ namespace QuantConnect.Tests.Algorithm
             // forex
             var forex = algo.AddSecurity(SecurityType.Forex, "eurusd");
             Assert.IsTrue(forex.Subscriptions.Count() == 1);
-            Assert.IsTrue(GetMatchingSubscription(forex, typeof(QuoteBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, forex.Symbol, typeof(QuoteBar)) != null);
 
             // equity high resolution
             var equityMinute = algo.AddSecurity(SecurityType.Equity, "goog");
             Assert.IsTrue(equityMinute.Subscriptions.Count() == 2);
-            Assert.IsTrue(GetMatchingSubscription(equityMinute, typeof(TradeBar)) != null);
-            Assert.IsTrue(GetMatchingSubscription(equityMinute, typeof(QuoteBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, equityMinute.Symbol, typeof(TradeBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, equityMinute.Symbol, typeof(QuoteBar)) != null);
 
             // equity low resolution
             var equityDaily = algo.AddSecurity(SecurityType.Equity, "goog", Resolution.Daily);
-            Assert.IsTrue(equityDaily.Subscriptions.Count() == 1);
-            Assert.IsTrue(GetMatchingSubscription(equityDaily, typeof(TradeBar)) != null);
+            Assert.IsTrue(equityDaily.Subscriptions.Count() == 3);
+            Assert.IsTrue(GetMatchingSubscription(algo, equityDaily.Symbol, typeof(TradeBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, equityMinute.Symbol, typeof(QuoteBar)) != null);
 
+            Assert.IsTrue(ReferenceEquals(equityMinute, equityDaily));
+
+            var equitySubscriptions = algo.SubscriptionManager.SubscriptionDataConfigService
+                .GetSubscriptionDataConfigs(equityMinute.Symbol);
+            Assert.IsTrue(equitySubscriptions.SingleOrDefault(
+                s => s.TickType == TickType.Trade && s.Type == typeof(TradeBar) && s.Resolution == Resolution.Minute) != null);
+            Assert.IsTrue(equitySubscriptions.SingleOrDefault(
+                s => s.TickType == TickType.Quote && s.Type == typeof(QuoteBar) && s.Resolution == Resolution.Minute) != null);
+            Assert.IsTrue(equitySubscriptions.SingleOrDefault(
+                s => s.TickType == TickType.Trade && s.Type == typeof(TradeBar) && s.Resolution == Resolution.Daily) != null);
 
             // option
             var option = algo.AddSecurity(SecurityType.Option, "goog");
             Assert.IsTrue(option.Subscriptions.Count() == 1);
-            Assert.IsTrue(GetMatchingSubscription(option, typeof(ZipEntryName)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, option.Symbol, typeof(OptionUniverse)) != null);
+
+            // index option
+            var indexOption = algo.AddSecurity(SecurityType.IndexOption, "spx");
+            Assert.IsTrue(indexOption.Subscriptions.Count() == 1);
+            Assert.IsTrue(GetMatchingSubscription(algo, indexOption.Symbol, typeof(OptionUniverse)) != null);
 
             // cfd
             var cfd = algo.AddSecurity(SecurityType.Cfd, "abc");
             Assert.IsTrue(cfd.Subscriptions.Count() == 1);
-            Assert.IsTrue(GetMatchingSubscription(cfd, typeof(QuoteBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, cfd.Symbol, typeof(QuoteBar)) != null);
 
             // future
             var future = algo.AddSecurity(SecurityType.Future, "ES");
             Assert.IsTrue(future.Subscriptions.Count() == 1);
-            Assert.IsTrue(future.Subscriptions.FirstOrDefault(x => typeof(ZipEntryName).IsAssignableFrom(x.Type)) != null);
+            Assert.IsTrue(future.Subscriptions.FirstOrDefault(x => typeof(FutureUniverse) == x.Type) != null);
 
             // Crypto high resolution
-            var cryptoMinute = algo.AddSecurity(SecurityType.Equity, "goog");
+            var cryptoMinute = algo.AddSecurity(SecurityType.Crypto, "btcusd");
             Assert.IsTrue(cryptoMinute.Subscriptions.Count() == 2);
-            Assert.IsTrue(GetMatchingSubscription(cryptoMinute, typeof(TradeBar)) != null);
-            Assert.IsTrue(GetMatchingSubscription(cryptoMinute, typeof(QuoteBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, cryptoMinute.Symbol, typeof(TradeBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, cryptoMinute.Symbol, typeof(QuoteBar)) != null);
 
             // Crypto low resolution
             var cryptoHourly = algo.AddSecurity(SecurityType.Crypto, "btcusd", Resolution.Hour);
-            Assert.IsTrue(cryptoHourly.Subscriptions.Count() == 2);
-            Assert.IsTrue(GetMatchingSubscription(cryptoHourly, typeof(TradeBar)) != null);
-            Assert.IsTrue(GetMatchingSubscription(cryptoHourly, typeof(QuoteBar)) != null);
+            Assert.IsTrue(cryptoHourly.Subscriptions.Count() == 4);
+            Assert.IsTrue(GetMatchingSubscription(algo, cryptoHourly.Symbol, typeof(TradeBar)) != null);
+            Assert.IsTrue(GetMatchingSubscription(algo, cryptoHourly.Symbol, typeof(QuoteBar)) != null);
+
+            Assert.IsTrue(ReferenceEquals(cryptoMinute, cryptoHourly));
+
+            var cryptoSubscriptions = algo.SubscriptionManager.SubscriptionDataConfigService
+                .GetSubscriptionDataConfigs(cryptoMinute.Symbol);
+            Assert.IsTrue(cryptoSubscriptions.SingleOrDefault(
+                s => s.TickType == TickType.Trade && s.Type == typeof(TradeBar) && s.Resolution == Resolution.Minute) != null);
+            Assert.IsTrue(cryptoSubscriptions.SingleOrDefault(
+                s => s.TickType == TickType.Quote && s.Type == typeof(QuoteBar) && s.Resolution == Resolution.Minute) != null);
+            Assert.IsTrue(cryptoSubscriptions.SingleOrDefault(
+                s => s.TickType == TickType.Trade && s.Type == typeof(TradeBar) && s.Resolution == Resolution.Hour) != null);
+            Assert.IsTrue(cryptoSubscriptions.SingleOrDefault(
+                s => s.TickType == TickType.Quote && s.Type == typeof(QuoteBar) && s.Resolution == Resolution.Hour) != null);
         }
 
 
@@ -134,10 +168,10 @@ namespace QuantConnect.Tests.Algorithm
             var bitcoinSubscription = qcAlgorithm.SubscriptionManager.Subscriptions.FirstOrDefault(x => x.Type == typeof(Bitcoin));
             Assert.AreEqual(bitcoinSubscription.Type, typeof(Bitcoin));
 
-            // Add a quandl subscription
-            qcAlgorithm.AddData<Quandl>("EURCAD");
-            var quandlSubscription = qcAlgorithm.SubscriptionManager.Subscriptions.FirstOrDefault(x => x.Type == typeof(Quandl));
-            Assert.AreEqual(quandlSubscription.Type, typeof(Quandl));
+            // Add a unlinkedData subscription
+            qcAlgorithm.AddData<UnlinkedData>("EURCAD");
+            var unlinkedDataSubscription = qcAlgorithm.SubscriptionManager.Subscriptions.FirstOrDefault(x => x.Type == typeof(UnlinkedData));
+            Assert.AreEqual(unlinkedDataSubscription.Type, typeof(UnlinkedData));
         }
 
         [Test]
@@ -146,6 +180,7 @@ namespace QuantConnect.Tests.Algorithm
             var qcAlgorithm = new QCAlgorithm();
             qcAlgorithm.SubscriptionManager.SetDataManager(new DataManagerStub(qcAlgorithm, new MockDataFeed()));
             qcAlgorithm.SetLiveMode(true);
+            qcAlgorithm.Settings.SeedInitialPrices = false;
             var testHistoryProvider = new TestHistoryProvider();
             qcAlgorithm.HistoryProvider = testHistoryProvider;
 
@@ -168,6 +203,7 @@ namespace QuantConnect.Tests.Algorithm
             var qcAlgorithm = new QCAlgorithm();
             qcAlgorithm.SubscriptionManager.SetDataManager(new DataManagerStub(qcAlgorithm, new MockDataFeed()));
             qcAlgorithm.SetLiveMode(true);
+            qcAlgorithm.Settings.SeedInitialPrices = false;
             var testHistoryProvider = new TestHistoryProvider();
             qcAlgorithm.HistoryProvider = testHistoryProvider;
             var option = qcAlgorithm.AddOption(testHistoryProvider.underlyingSymbol);
@@ -182,21 +218,20 @@ namespace QuantConnect.Tests.Algorithm
 
             qcAlgorithm.OnEndOfTimeStep();
             var data = qcAlgorithm.Securities[testHistoryProvider.underlyingSymbol].GetLastData();
-            Assert.AreEqual(testHistoryProvider.LastResolutionRequest, Resolution.Minute);
             Assert.IsNotNull(data);
             Assert.AreEqual(data.Price, 2);
         }
 
-        [TestCase("EURUSD", typeof(TiingoNews), SecurityType.Cfd, false, true)]
-        [TestCase("BTCUSD", typeof(TiingoNews), SecurityType.Crypto, false, true)]
-        [TestCase("CL", typeof(TiingoNews), SecurityType.Future, false, true)]
-        [TestCase("EURUSD", typeof(TiingoNews), SecurityType.Forex, false, true)]
-        [TestCase("AAPL", typeof(TiingoNews), SecurityType.Equity, true, true)]
-        [TestCase("EURUSD", typeof(TradingEconomicsCalendar), SecurityType.Cfd, false, false)]
-        [TestCase("BTCUSD", typeof(TradingEconomicsCalendar), SecurityType.Crypto, false, false)]
-        [TestCase("CL", typeof(TradingEconomicsCalendar), SecurityType.Future, false, false)]
-        [TestCase("AAPL", typeof(TradingEconomicsCalendar), SecurityType.Equity, true, false)]
-        [TestCase("EURUSD", typeof(TradingEconomicsCalendar), SecurityType.Forex, false, false)]
+        [TestCase("EURUSD", typeof(IndexedLinkedData), SecurityType.Cfd, false, true)]
+        [TestCase("BTCUSD", typeof(IndexedLinkedData), SecurityType.Crypto, false, true)]
+        [TestCase("CL", typeof(IndexedLinkedData), SecurityType.Future, true, true)]
+        [TestCase("EURUSD", typeof(IndexedLinkedData), SecurityType.Forex, false, true)]
+        [TestCase("AAPL", typeof(IndexedLinkedData), SecurityType.Equity, true, true)]
+        [TestCase("EURUSD", typeof(UnlinkedData), SecurityType.Cfd, false, false)]
+        [TestCase("BTCUSD", typeof(UnlinkedData), SecurityType.Crypto, false, false)]
+        [TestCase("CL", typeof(UnlinkedData), SecurityType.Future, true, false)]
+        [TestCase("AAPL", typeof(UnlinkedData), SecurityType.Equity, true, false)]
+        [TestCase("EURUSD", typeof(UnlinkedData), SecurityType.Forex, false, false)]
         public void AddDataSecuritySymbolWithUnderlying(string ticker, Type customDataType, SecurityType securityType, bool securityShouldBeMapped, bool customDataShouldBeMapped)
         {
             SymbolCache.Clear();
@@ -253,11 +288,11 @@ namespace QuantConnect.Tests.Algorithm
             }
         }
 
-        [TestCase("EURUSD", typeof(TiingoNews), SecurityType.Cfd, false, false)]
-        [TestCase("BTCUSD", typeof(TiingoNews), SecurityType.Crypto, false, false)]
-        [TestCase("CL", typeof(TiingoNews), SecurityType.Future, false, false)]
-        [TestCase("EURUSD", typeof(TiingoNews), SecurityType.Forex, false, false)]
-        [TestCase("AAPL", typeof(TiingoNews), SecurityType.Equity, true, true)]
+        [TestCase("EURUSD", typeof(IndexedLinkedData), SecurityType.Cfd, false, false)]
+        [TestCase("BTCUSD", typeof(IndexedLinkedData), SecurityType.Crypto, false, false)]
+        [TestCase("CL", typeof(IndexedLinkedData), SecurityType.Future, false, false)]
+        [TestCase("EURUSD", typeof(IndexedLinkedData), SecurityType.Forex, false, false)]
+        [TestCase("AAPL", typeof(IndexedLinkedData), SecurityType.Equity, true, true)]
         public void AddDataSecurityTickerWithUnderlying(string ticker, Type customDataType, SecurityType securityType, bool securityShouldBeMapped, bool customDataShouldBeMapped)
         {
             SymbolCache.Clear();
@@ -324,11 +359,11 @@ namespace QuantConnect.Tests.Algorithm
             }
         }
 
-        [TestCase("EURUSD", typeof(TradingEconomicsCalendar), SecurityType.Cfd, false, false)]
-        [TestCase("BTCUSD", typeof(TradingEconomicsCalendar), SecurityType.Crypto, false, false)]
-        [TestCase("CL", typeof(TradingEconomicsCalendar), SecurityType.Future, false, false)]
-        [TestCase("AAPL", typeof(TradingEconomicsCalendar), SecurityType.Equity, true, false)]
-        [TestCase("EURUSD", typeof(TradingEconomicsCalendar), SecurityType.Forex, false, false)]
+        [TestCase("EURUSD", typeof(UnlinkedData), SecurityType.Cfd, false, false)]
+        [TestCase("BTCUSD", typeof(UnlinkedData), SecurityType.Crypto, false, false)]
+        [TestCase("CL", typeof(UnlinkedData), SecurityType.Future, true, false)]
+        [TestCase("AAPL", typeof(UnlinkedData), SecurityType.Equity, true, false)]
+        [TestCase("EURUSD", typeof(UnlinkedData), SecurityType.Forex, false, false)]
         public void AddDataSecurityTickerNoUnderlying(string ticker, Type customDataType, SecurityType securityType, bool securityShouldBeMapped, bool customDataShouldBeMapped)
         {
             SymbolCache.Clear();
@@ -447,15 +482,15 @@ namespace QuantConnect.Tests.Algorithm
             underlying.SetFilter(0, 365);
 
             algo.AddFutureOption(underlying.Symbol, _ => _);
-            Assert.IsTrue(algo.UniverseSelection is OptionChainedUniverseSelectionModel);
+            Assert.IsTrue(algo.UniverseSelection is CompositeUniverseSelectionModel);
         }
 
-        [TestCase("AAPL", typeof(TiingoNews), true)]
-        [TestCase("TWX", typeof(TiingoNews), true)]
-        [TestCase("FB", typeof(TiingoNews), true)]
-        [TestCase("NFLX", typeof(TiingoNews), true)]
-        [TestCase("TWX", typeof(TradingEconomicsCalendar), false)]
-        [TestCase("AAPL", typeof(TradingEconomicsCalendar), false)]
+        [TestCase("AAPL", typeof(IndexedLinkedData), true)]
+        [TestCase("TWX", typeof(IndexedLinkedData), true)]
+        [TestCase("FB", typeof(IndexedLinkedData), true)]
+        [TestCase("NFLX", typeof(IndexedLinkedData), true)]
+        [TestCase("TWX", typeof(UnlinkedData), false)]
+        [TestCase("AAPL", typeof(UnlinkedData), false)]
         public void AddDataOptionsSymbolHasChainedUnderlyingSymbols(string ticker, Type customDataType, bool customDataShouldBeMapped)
         {
             SymbolCache.Clear();
@@ -485,10 +520,10 @@ namespace QuantConnect.Tests.Algorithm
             Assert.AreEqual($"?{assetSubscription.MappedSymbol}", customDataSubscription.MappedSymbol);
         }
 
-        [TestCase("AAPL", typeof(TiingoNews))]
-        [TestCase("TWX", typeof(TiingoNews))]
-        [TestCase("FB", typeof(TiingoNews))]
-        [TestCase("NFLX", typeof(TiingoNews))]
+        [TestCase("AAPL", typeof(IndexedLinkedData))]
+        [TestCase("TWX", typeof(IndexedLinkedData))]
+        [TestCase("FB", typeof(IndexedLinkedData))]
+        [TestCase("NFLX", typeof(IndexedLinkedData))]
         public void AddDataOptionsTickerHasChainedUnderlyingSymbol(string ticker, Type customDataType)
         {
             SymbolCache.Clear();
@@ -518,8 +553,8 @@ namespace QuantConnect.Tests.Algorithm
             Assert.AreEqual(assetSubscription.MappedSymbol, customDataSubscription.MappedSymbol);
         }
 
-        [TestCase("AAPL", typeof(TradingEconomicsCalendar))]
-        [TestCase("FDTR", typeof(TradingEconomicsCalendar))]
+        [TestCase("AAPL", typeof(UnlinkedData))]
+        [TestCase("FDTR", typeof(UnlinkedData))]
         public void AddDataOptionsTickerHasNoChainedUnderlyingSymbols(string ticker, Type customDataType)
         {
             SymbolCache.Clear();
@@ -554,7 +589,7 @@ namespace QuantConnect.Tests.Algorithm
 
             // Initialize contains the statements:
             // self.AddData(Nifty, "NIFTY")
-            // self.AddData(QuandlFuture, "SCF/CME_CL1_ON", Resolution.Daily)
+            // self.AddData(CustomPythonData, "IBM", Resolution.Daily)
             qcAlgorithm.Initialize();
 
             var niftySubscription = qcAlgorithm.SubscriptionManager.Subscriptions.FirstOrDefault(x => x.Symbol.Value == "NIFTY");
@@ -563,11 +598,13 @@ namespace QuantConnect.Tests.Algorithm
             var niftyFactory = (BaseData)ObjectActivator.GetActivator(niftySubscription.Type).Invoke(new object[] { niftySubscription.Type });
             Assert.DoesNotThrow(() => niftyFactory.GetSource(niftySubscription, DateTime.UtcNow, false));
 
-            var quandlSubscription = qcAlgorithm.SubscriptionManager.Subscriptions.FirstOrDefault(x => x.Symbol.Value == "SCF/CME_CL1_ON");
-            Assert.IsNotNull(quandlSubscription);
+            var customDataSubscription = qcAlgorithm.SubscriptionManager.Subscriptions.FirstOrDefault(x => x.Symbol.Value == "IBM");
+            Assert.IsNotNull(customDataSubscription);
+            Assert.IsTrue(customDataSubscription.IsCustomData);
+            Assert.AreEqual("custom_data.CustomPythonData", customDataSubscription.Type.ToString());
 
-            var quandlFactory = (BaseData)ObjectActivator.GetActivator(quandlSubscription.Type).Invoke(new object[] { quandlSubscription.Type });
-            Assert.DoesNotThrow(() => quandlFactory.GetSource(quandlSubscription, DateTime.UtcNow, false));
+            var customDataFactory = (BaseData)ObjectActivator.GetActivator(customDataSubscription.Type).Invoke(new object[] { customDataSubscription.Type });
+            Assert.DoesNotThrow(() => customDataFactory.GetSource(customDataSubscription, DateTime.UtcNow, false));
         }
 
         [Test]
@@ -578,14 +615,16 @@ namespace QuantConnect.Tests.Algorithm
 
             // Initialize contains the statements:
             // self.AddData(Nifty, "NIFTY")
-            // self.AddData(QuandlFuture, "SCF/CME_CL1_ON", Resolution.Daily)
+            // self.AddData(CustomPythonData, "IBM", Resolution.Daily)
             qcAlgorithm.Initialize();
 
-            var niftyConsolidator = new DynamicDataConsolidator(TimeSpan.FromDays(2));
+            #pragma warning disable CS0618
+            using var niftyConsolidator = new DynamicDataConsolidator(TimeSpan.FromDays(2));
             Assert.DoesNotThrow(() => qcAlgorithm.SubscriptionManager.AddConsolidator("NIFTY", niftyConsolidator));
 
-            var quandlConsolidator = new DynamicDataConsolidator(TimeSpan.FromDays(2));
-            Assert.DoesNotThrow(() => qcAlgorithm.SubscriptionManager.AddConsolidator("SCF/CME_CL1_ON", quandlConsolidator));
+            using var customDataConsolidator = new DynamicDataConsolidator(TimeSpan.FromDays(2));
+            Assert.DoesNotThrow(() => qcAlgorithm.SubscriptionManager.AddConsolidator("IBM", customDataConsolidator));
+            #pragma warning restore CS0618
         }
 
         [Test]
@@ -600,15 +639,31 @@ namespace QuantConnect.Tests.Algorithm
         }
 
         [Test]
+        public void AddDataWithStringAsTypeArgumentThrowsClearError()
+        {
+            var qcAlgorithm = new QCAlgorithm();
+            qcAlgorithm.SubscriptionManager.SetDataManager(new DataManagerStub(qcAlgorithm));
+
+            using var _ = Py.GIL();
+            using var pyTicker = "VIX".ToPython();
+
+            // Passing a string instead of a custom data class as the first argument used to silently build a
+            // dynamic assembly named after the string and later hang/fail downstream. It must now throw.
+            var ex = Assert.Throws<ArgumentException>(() => qcAlgorithm.AddData(pyTicker, "VIX", Resolution.Daily));
+            StringAssert.Contains("AddData", ex.Message);
+            StringAssert.Contains("AddEquity", ex.Message);
+        }
+
+        [Test]
         public void AppendsCustomDataTypeName_ToSecurityIdentifierSymbol()
         {
             const string ticker = "ticker";
             var algorithm = Algorithm();
 
-            var security = algorithm.AddData<Quandl>(ticker);
+            var security = algorithm.AddData<UnlinkedData>(ticker);
             Assert.AreEqual(ticker.ToUpperInvariant(), security.Symbol.Value);
-            Assert.AreEqual($"{ticker.ToUpperInvariant()}.{typeof(Quandl).Name}", security.Symbol.ID.Symbol);
-            Assert.AreEqual(SecurityIdentifier.GenerateBaseSymbol(typeof(Quandl), ticker), security.Symbol.ID.Symbol);
+            Assert.AreEqual($"{ticker.ToUpperInvariant()}.{typeof(UnlinkedData).Name}", security.Symbol.ID.Symbol);
+            Assert.AreEqual(SecurityIdentifier.GenerateBaseSymbol(typeof(UnlinkedData), ticker), security.Symbol.ID.Symbol);
         }
 
         [Test]
@@ -617,7 +672,7 @@ namespace QuantConnect.Tests.Algorithm
             var algorithm = Algorithm();
 
             Symbol cachedSymbol;
-            var security = algorithm.AddData<Quandl>("ticker");
+            var security = algorithm.AddData<UnlinkedData>("ticker");
             var symbolCacheAlias = security.Symbol.ID.Symbol;
 
             Assert.IsTrue(SymbolCache.TryGetSymbol(symbolCacheAlias, out cachedSymbol));
@@ -630,24 +685,130 @@ namespace QuantConnect.Tests.Algorithm
             const string ticker = "ticker";
             var algorithm = Algorithm();
 
-            var security1 = algorithm.AddData<Quandl>(ticker);
+            var security1 = algorithm.AddData<UnlinkedData>(ticker);
             var security2 = algorithm.AddData<Bitcoin>(ticker);
 
-            var quandl = algorithm.Securities[security1.Symbol];
-            Assert.AreSame(security1, quandl);
+            var unlinkedData = algorithm.Securities[security1.Symbol];
+            Assert.AreSame(security1, unlinkedData);
 
             var bitcoin = algorithm.Securities[security2.Symbol];
             Assert.AreSame(security2, bitcoin);
 
-            Assert.AreNotSame(quandl, bitcoin);
+            Assert.AreNotSame(unlinkedData, bitcoin);
         }
 
-        private static SubscriptionDataConfig GetMatchingSubscription(Security security, Type type)
+        [TestCase(SecurityType.Equity)]
+        [TestCase(SecurityType.Index)]
+        [TestCase(SecurityType.Future)]
+        public void AddOptionContractWithDelistedUnderlyingThrows(SecurityType underlyingSecurityType)
+        {
+            var algorithm = Algorithm();
+            algorithm.SetStartDate(2007, 05, 25);
+
+            Security underlying = underlyingSecurityType switch
+            {
+                SecurityType.Equity => algorithm.AddEquity("SPY"),
+                SecurityType.Index => algorithm.AddIndex("SPX"),
+                SecurityType.Future => algorithm.AddFuture("ES"),
+                _ => throw new ArgumentException($"Invalid test underlying security type {underlyingSecurityType}")
+            };
+
+            underlying.IsDelisted = true;
+            // let's remove the underlying since it's delisted
+            algorithm.RemoveSecurity(underlying.Symbol);
+
+            var optionContractSymbol = Symbol.CreateOption(underlying.Symbol, Market.USA, OptionStyle.American, OptionRight.Call, 100,
+                new DateTime(2007, 06, 15));
+
+            var exception = Assert.Throws<ArgumentException>(() => algorithm.AddOptionContract(optionContractSymbol));
+            Assert.IsTrue(exception.Message.Contains("is delisted"), $"Unexpected exception message: {exception.Message}");
+        }
+
+        [TestCase(Resolution.Daily, Resolution.Minute, true)]
+        [TestCase(Resolution.Hour, Resolution.Minute, true)]
+        [TestCase(Resolution.Minute, Resolution.Minute, false)]
+        [TestCase(Resolution.Second, Resolution.Minute, false)]
+        public void AddOptionContractWarnsForCoarseUnderlyingResolution(
+            Resolution underlyingResolution, Resolution optionResolution, bool shouldWarn)
+        {
+            var algorithm = Algorithm();
+            var underlying = algorithm.AddEquity("SPY", underlyingResolution).Symbol;
+            var option = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call,
+                100m, new DateTime(2027, 1, 15));
+
+            Assert.DoesNotThrow(() => algorithm.AddOptionContract(option, optionResolution));
+
+            var warnings = algorithm.DebugMessages.Where(message => message.Contains("but its underlying")).ToList();
+            Assert.AreEqual(shouldWarn ? 1 : 0, warnings.Count);
+            if (shouldWarn)
+            {
+                StringAssert.Contains($"Add the underlying at {optionResolution} resolution or finer", warnings.Single());
+            }
+        }
+
+        [Test]
+        public void AddOptionContractUsesHighestAvailableUnderlyingResolution()
+        {
+            var algorithm = Algorithm();
+            var underlying = algorithm.AddEquity("SPY", Resolution.Daily).Symbol;
+            algorithm.AddEquity("SPY", Resolution.Minute);
+            var option = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call,
+                100m, new DateTime(2027, 1, 15));
+
+            Assert.DoesNotThrow(() => algorithm.AddOptionContract(option, Resolution.Minute));
+
+            Assert.IsFalse(algorithm.DebugMessages.Any(message => message.Contains("but its underlying")));
+        }
+
+        [TestCase(Resolution.Daily, Resolution.Minute, true)]
+        [TestCase(Resolution.Minute, Resolution.Minute, false)]
+        [TestCase(Resolution.Second, Resolution.Minute, false)]
+        public void AddOptionWarnsForCoarseUnderlyingResolution(
+            Resolution underlyingResolution, Resolution optionResolution, bool shouldWarn)
+        {
+            var algorithm = Algorithm();
+            algorithm.AddEquity("SPY", underlyingResolution);
+
+            Assert.DoesNotThrow(() => algorithm.AddOption("SPY", optionResolution));
+
+            Assert.AreEqual(shouldWarn ? 1 : 0, algorithm.DebugMessages.Count(message => message.Contains("but its underlying")));
+        }
+
+        [Test]
+        public void AddOptionDoesNotWarnWhenUnderlyingIsNotPresent()
+        {
+            var algorithm = Algorithm();
+
+            Assert.DoesNotThrow(() => algorithm.AddOption("SPY", Resolution.Minute));
+
+            Assert.IsFalse(algorithm.DebugMessages.Any(message => message.Contains("but its underlying")));
+        }
+
+        [Test]
+        public void AddOptionContractWarnsOnceForCoarseUnderlyingResolution()
+        {
+            var algorithm = Algorithm();
+            algorithm.UniverseSettings.Resolution = Resolution.Minute;
+            var underlying = algorithm.AddEquity("SPY", Resolution.Daily).Symbol;
+            var firstOption = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call,
+                100m, new DateTime(2027, 1, 15));
+            var secondOption = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Put,
+                105m, new DateTime(2027, 1, 15));
+
+            Assert.DoesNotThrow(() => algorithm.AddOptionContract(firstOption));
+            Assert.DoesNotThrow(() => algorithm.AddOptionContract(secondOption));
+
+            Assert.AreEqual(1, algorithm.DebugMessages.Count(message => message.Contains("but its underlying")));
+        }
+
+        private static SubscriptionDataConfig GetMatchingSubscription(QCAlgorithm algorithm, Symbol symbol, Type type)
         {
             // find a subscription matchin the requested type with a higher resolution than requested
-            return (from sub in security.Subscriptions.OrderByDescending(s => s.Resolution)
-                    where type.IsAssignableFrom(sub.Type)
-                    select sub).FirstOrDefault();
+            return algorithm.SubscriptionManager.SubscriptionDataConfigService
+                .GetSubscriptionDataConfigs(symbol)
+                .Where(config => type.IsAssignableFrom(config.Type))
+                .OrderByDescending(s => s.Resolution)
+                .FirstOrDefault();
         }
 
         private static QCAlgorithm Algorithm()
@@ -662,7 +823,6 @@ namespace QuantConnect.Tests.Algorithm
             public string underlyingSymbol = "GOOG";
             public string underlyingSymbol2 = "AAPL";
             public override int DataPointCount { get; }
-            public Resolution LastResolutionRequest;
 
             public override void Initialize(HistoryProviderInitializeParameters parameters)
             {
@@ -672,22 +832,23 @@ namespace QuantConnect.Tests.Algorithm
             public override IEnumerable<Slice> GetHistory(IEnumerable<HistoryRequest> requests, DateTimeZone sliceTimeZone)
             {
                 var now = DateTime.UtcNow;
-                LastResolutionRequest = requests.First().Resolution;
+                #pragma warning disable CS0618
                 var tradeBar1 = new TradeBar(now, underlyingSymbol, 1, 1, 1, 1, 1, TimeSpan.FromDays(1));
                 var tradeBar2 = new TradeBar(now, underlyingSymbol2, 3, 3, 3, 3, 3, TimeSpan.FromDays(1));
                 var slice1 = new Slice(now, new List<BaseData> { tradeBar1, tradeBar2 },
-                                    new TradeBars(now), new QuoteBars(),
+                                    new TradeBars(now) { tradeBar1, tradeBar2  }, new QuoteBars(),
                                     new Ticks(), new OptionChains(),
                                     new FuturesChains(), new Splits(),
                                     new Dividends(now), new Delistings(),
-                                    new SymbolChangedEvents());
+                                    new SymbolChangedEvents(), new MarginInterestRates(), now);
                 var tradeBar1_2 = new TradeBar(now, underlyingSymbol, 2, 2, 2, 2, 2, TimeSpan.FromDays(1));
+                #pragma warning restore CS0618
                 var slice2 = new Slice(now, new List<BaseData> { tradeBar1_2 },
-                    new TradeBars(now), new QuoteBars(),
+                    new TradeBars(now) { tradeBar1_2 }, new QuoteBars(),
                     new Ticks(), new OptionChains(),
                     new FuturesChains(), new Splits(),
                     new Dividends(now), new Delistings(),
-                    new SymbolChangedEvents());
+                    new SymbolChangedEvents(), new MarginInterestRates(), now);
                 return new[] { slice1, slice2 };
             }
         }

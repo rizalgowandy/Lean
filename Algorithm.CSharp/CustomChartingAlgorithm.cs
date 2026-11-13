@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -21,7 +21,7 @@ namespace QuantConnect.Algorithm.CSharp
     /// <summary>
     /// Algorithm demonstrating custom charting support in QuantConnect.
     /// The entire charting system of quantconnect is adaptable. You can adjust it to draw whatever you'd like.
-    /// Charts can be stacked, or overlayed on each other. Series can be candles, lines or scatter plots.
+    /// Charts can be stacked, or overlaid on each other. Series can be candles, lines or scatter plots.
     /// Even the default behaviours of QuantConnect can be overridden.
     /// </summary>
     /// <meta name="tag" content="charting" />
@@ -52,7 +52,7 @@ namespace QuantConnect.Algorithm.CSharp
 
             //Add any stocks you'd like to analyse, and set the resolution:
             // Find more symbols here: http://quantconnect.com/data
-            AddSecurity(SecurityType.Equity, "SPY");
+            var spy = AddSecurity(SecurityType.Equity, "SPY").Symbol;
 
             //Chart - Master Container for the Chart:
             var stockPlot = new Chart("Trade Plot");
@@ -73,6 +73,17 @@ namespace QuantConnect.Algorithm.CSharp
             AddChart(avgCross);
 
             _resamplePeriod = TimeSpan.FromMinutes((_endDate - _startDate).TotalMinutes / 2000);
+
+            // There's support for candlestick charts built-in:
+            var dailySpyPlot = new Chart("Daily SPY");
+            var spyCandlesticks = new CandlestickSeries("SPY");
+            dailySpyPlot.AddSeries(spyCandlesticks);
+            AddChart(dailySpyPlot);
+
+            Consolidate<TradeBar>(spy, TimeSpan.FromDays(1), (bar) =>
+            {
+                Plot("Daily SPY", "SPY", bar);
+            });
         }
 
 

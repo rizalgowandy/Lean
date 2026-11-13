@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -51,6 +51,47 @@ namespace QuantConnect.Tests.Indicators
             ARIMA.Reset();
             TestHelper.TestIndicator(ARIMA, TestFileName, TestColumnName,
                 (ind, expected) => Assert.AreEqual(expected, (double) ARIMA.Current.Value, 10d));
+        }
+
+        [TestCase(2, 0, 1)]
+        [TestCase(3, 1, 1)]
+        [TestCase(4, 0, 2)]
+        public void AcceptsAnAutoRegressiveOrderAboveTheMovingAverageOrder(int arOrder, int diffOrder, int maOrder)
+        {
+            var arima = new AutoRegressiveIntegratedMovingAverage(arOrder, diffOrder, maOrder, 50, true);
+            var reference = new DateTime(2020, 1, 1);
+
+            for (var i = 0; i < 60; i++)
+            {
+                arima.Update(reference.AddDays(i), 100m + (decimal)Math.Sin(i / 3d) * 5m);
+            }
+
+            Assert.IsTrue(arima.IsReady);
+        }
+
+        [TestCase(1, 0, 1, 3)]
+        [TestCase(1, 1, 1, 4)]
+        [TestCase(2, 1, 2, 6)]
+        [TestCase(1, 2, 0, 3)]
+        [TestCase(1, -2, 1, 3)]
+        [TestCase(1, -3, 2, 5)]
+        public void RejectsAPeriodTooShortForItsOrders(int arOrder, int diffOrder, int maOrder, int shortest)
+        {
+            var exception = Assert.Throws<ArgumentException>(() =>
+                new AutoRegressiveIntegratedMovingAverage(arOrder, diffOrder, maOrder, shortest - 1, true));
+            Assert.That(exception.Message, Is.EqualTo(
+                $"Period parameter for ARIMA({arOrder}, {diffOrder}, {maOrder}) indicator " +
+                $"must be at least {shortest} but was {shortest - 1}"));
+
+            var arima = new AutoRegressiveIntegratedMovingAverage(arOrder, diffOrder, maOrder, shortest, true);
+            var reference = new DateTime(2020, 1, 1);
+
+            for (var i = 0; i < shortest + 1; i++)
+            {
+                arima.Update(reference.AddDays(i), 100m + (decimal)Math.Sin(i / 3d) * 5m);
+            }
+
+            Assert.IsTrue(arima.IsReady);
         }
 
         [Test]
@@ -113,7 +154,7 @@ namespace QuantConnect.Tests.Indicators
             var data = TestHelper.GetCsvFileStream(TestFileName);
             foreach (var val in data)
             {
-                if (val["Close"] != string.Empty)
+                if (!string.IsNullOrEmpty(val["Close"]))
                 {
                     var close = val["Close"];
                     realValues.Add(decimal.Parse(val["Close"], new NumberFormatInfo()));
@@ -121,7 +162,7 @@ namespace QuantConnect.Tests.Indicators
                         Convert.ToDecimal(close, new NumberFormatInfo())));
                 }
 
-                if (val[TestColumnName] != string.Empty)
+                if (!string.IsNullOrEmpty(val[TestColumnName]))
                 {
                     var fromTest = decimal.Parse(val[TestColumnName], new NumberFormatInfo());
                     testValues.Add(new[] {ARIMA.Current.Value, fromTest});

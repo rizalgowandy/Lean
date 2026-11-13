@@ -40,7 +40,7 @@ namespace QuantConnect.Lean.Engine.RealTime
         /// the addition</param>
         /// <param name="timeOfDay">The time each tradeable date to fire the event</param>
         /// <param name="callback">The delegate to call when an event fires</param>
-        /// <param name="currentUtcTime">Specfies the current time in UTC, before which, no events will be scheduled. Specify null to skip this filter.</param>
+        /// <param name="currentUtcTime">Specifies the current time in UTC, before which, no events will be scheduled. Specify null to skip this filter.</param>
         /// <returns>A new <see cref="ScheduledEvent"/> instance that fires events each tradeable day from the start to the finish at the specified time</returns>
         public static ScheduledEvent EveryDayAt(string name, IEnumerable<DateTime> dates, TimeSpan timeOfDay, Action<string, DateTime> callback, DateTime? currentUtcTime = null)
         {
@@ -55,19 +55,19 @@ namespace QuantConnect.Lean.Engine.RealTime
         /// <summary>
         /// Creates a new <see cref="ScheduledEvent"/> that will fire before market close by the specified time
         /// </summary>
-        /// <param name="algorithm">The algorithm instance the event is fo</param>
+        /// <param name="algorithm">The algorithm instance the event is for</param>
         /// <param name="resultHandler">The result handler, used to communicate run time errors</param>
         /// <param name="start">The date to start the events</param>
         /// <param name="end">The date to end the events</param>
         /// <param name="endOfDayDelta">The time difference between the market close and the event, positive time will fire before market close</param>
-        /// <param name="currentUtcTime">Specfies the current time in UTC, before which, no events will be scheduled. Specify null to skip this filter.</param>
+        /// <param name="currentUtcTime">Specifies the current time in UTC, before which, no events will be scheduled. Specify null to skip this filter.</param>
         /// <returns>The new <see cref="ScheduledEvent"/> that will fire near market close each tradeable dat</returns>
         [Obsolete("This method is deprecated. It will generate ScheduledEvents for the deprecated IAlgorithm.OnEndOfDay()")]
         public static ScheduledEvent EveryAlgorithmEndOfDay(IAlgorithm algorithm, IResultHandler resultHandler, DateTime start, DateTime end, TimeSpan endOfDayDelta, DateTime? currentUtcTime = null)
         {
             if (endOfDayDelta >= Time.OneDay)
             {
-                throw new ArgumentException("Delta must be less than a day", "endOfDayDelta");
+                throw new ArgumentException("Delta must be less than a day", nameof(endOfDayDelta));
             }
 
             // set up an event to fire every tradeable date for the algorithm as a whole
@@ -105,30 +105,34 @@ namespace QuantConnect.Lean.Engine.RealTime
         /// <summary>
         /// Creates a new <see cref="ScheduledEvent"/> that will fire before market close by the specified time
         /// </summary>
-        /// <param name="algorithm">The algorithm instance the event is fo</param>
+        /// <param name="algorithm">The algorithm instance the event is for</param>
         /// <param name="resultHandler">The result handler, used to communicate run time errors</param>
         /// <param name="security">The security used for defining tradeable dates</param>
         /// <param name="start">The first date for the events</param>
         /// <param name="end">The date to end the events</param>
         /// <param name="endOfDayDelta">The time difference between the market close and the event, positive time will fire before market close</param>
-        /// <param name="currentUtcTime">Specfies the current time in UTC, before which, no events will be scheduled. Specify null to skip this filter.</param>
+        /// <param name="currentUtcTime">Specifies the current time in UTC, before which, no events will be scheduled. Specify null to skip this filter.</param>
         /// <returns>The new <see cref="ScheduledEvent"/> that will fire near market close each tradeable dat</returns>
         public static ScheduledEvent EverySecurityEndOfDay(IAlgorithm algorithm, IResultHandler resultHandler, Security security, DateTime start, DateTime end, TimeSpan endOfDayDelta, DateTime? currentUtcTime = null)
         {
             if (endOfDayDelta >= Time.OneDay)
             {
-                throw new ArgumentException("Delta must be less than a day", "endOfDayDelta");
+                throw new ArgumentException("Delta must be less than a day", nameof(endOfDayDelta));
             }
+
+            var isMarketAlwaysOpen = security.Exchange.Hours.IsMarketAlwaysOpen;
 
             // define all the times we want this event to be fired, every tradeable day for the securtiy
             // at the delta time before market close expressed in UTC
             var times =
                 // for every date the exchange is open for this security
                 from date in Time.EachTradeableDay(security, start, end)
-                // get the next market close for the specified date
-                let marketClose = security.Exchange.Hours.GetNextMarketClose(date, security.IsExtendedMarketHours)
+                // get the next market close for the specified date if the market closes at some point.
+                // Otherwise, use the given date at midnight
+                let marketClose = isMarketAlwaysOpen ?
+                    date.Date.AddDays(1) : security.Exchange.Hours.GetLastDailyMarketClose(date, security.IsExtendedMarketHours)
                 // define the time of day we want the event to fire before marketclose
-                let eventTime = marketClose.Subtract(endOfDayDelta)
+                let eventTime = isMarketAlwaysOpen ? marketClose : marketClose.Subtract(endOfDayDelta)
                 // convert the event time into UTC
                 let eventUtcTime = eventTime.ConvertToUtc(security.Exchange.TimeZone)
                 // perform filter to verify it's not before the current time

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -21,6 +21,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 
 namespace QuantConnect.Brokerages
@@ -33,52 +34,123 @@ namespace QuantConnect.Brokerages
     {
         private const int ConnectionTimeout = 30000;
 
+        private IRestClient _restClient;
+        private HttpClient _httpClient;
+
+        /// <summary>
+        /// True if the current brokerage is already initialized
+        /// </summary>
+        protected bool IsInitialized { get; set; }
+
         /// <summary>
         /// The websockets client instance
         /// </summary>
-        protected readonly IWebSocket WebSocket;
+        protected IWebSocket WebSocket { get; set; }
 
         /// <summary>
         /// The rest client instance
         /// </summary>
-        protected readonly IRestClient RestClient;
+        [Obsolete("RestClient is deprecated. Use HttpClient property instead")]
+        protected IRestClient RestClient
+        {
+            get
+            {
+                if (_restClient == null)
+                {
+                    throw new InvalidOperationException("RestClient not initialized");
+                }
+                return _restClient;
+            }
+            set
+            {
+                _restClient = value;
+            }
+        }
+
+        /// <summary>
+        /// The HTTP client instance
+        /// </summary>
+        protected HttpClient HttpClient
+        {
+            get
+            {
+                if (_httpClient == null)
+                {
+                    throw new InvalidOperationException("HttpClient not initialized");
+                }
+                return _httpClient;
+            }
+            set
+            {
+                _httpClient = value;
+            }
+        }
 
         /// <summary>
         /// standard json parsing settings
         /// </summary>
-        protected readonly JsonSerializerSettings JsonSettings;
+        protected JsonSerializerSettings JsonSettings { get; set; }
 
         /// <summary>
         /// A list of currently active orders
         /// </summary>
-        public readonly ConcurrentDictionary<int, Orders.Order> CachedOrderIDs;
+        public ConcurrentDictionary<int, Orders.Order> CachedOrderIDs { get; set; }
 
         /// <summary>
         /// The api secret
         /// </summary>
-        protected readonly string ApiSecret;
+        protected string ApiSecret { get; set; }
 
         /// <summary>
         /// The api key
         /// </summary>
-        protected readonly string ApiKey;
+        protected string ApiKey { get; set; }
 
         /// <summary>
         /// Count subscribers for each (symbol, tickType) combination
         /// </summary>
-        protected DataQueueHandlerSubscriptionManager SubscriptionManager;
+        protected DataQueueHandlerSubscriptionManager SubscriptionManager { get; set; }
 
         /// <summary>
-        /// Creates an instance of a websockets brokerage
+        /// Initialize the instance of this class
         /// </summary>
-        /// <param name="wssUrl">Websockets base url</param>
-        /// <param name="websocket">Websocket client instance</param>
-        /// <param name="restClient">Rest client instance</param>
-        /// <param name="apiKey">Brokerage api auth key</param>
-        /// <param name="apiSecret">Brokerage api auth secret</param>
-        /// <param name="name">Name of brokerage</param>
-        protected BaseWebsocketsBrokerage(string wssUrl, IWebSocket websocket, IRestClient restClient, string apiKey, string apiSecret, string name) : base(name)
+        /// <param name="wssUrl">The web socket base url</param>
+        /// <param name="websocket">instance of websockets client</param>
+        /// <param name="restClient">instance of rest client</param>
+        /// <param name="apiKey">api key</param>
+        /// <param name="apiSecret">api secret</param>
+        [Obsolete("This Initialize method is deprecated. Use the overload that takes an HttpClient instance instead.")]
+        protected void Initialize(string wssUrl, IWebSocket websocket, IRestClient restClient, string apiKey, string apiSecret)
         {
+            if (TryInitialize(wssUrl, websocket, apiKey, apiSecret))
+            {
+                RestClient = restClient;
+            }
+        }
+
+        /// <summary>
+        /// Initialize the instance of this class
+        /// </summary>
+        /// <param name="wssUrl">The web socket base url</param>
+        /// <param name="websocket">Instance of websockets client</param>
+        /// <param name="httpClient">Instance of HTTP client</param>
+        /// <param name="apiKey">Api key</param>
+        /// <param name="apiSecret">Api secret</param>
+        protected void Initialize(string wssUrl, IWebSocket websocket, HttpClient httpClient, string apiKey, string apiSecret)
+        {
+            if (TryInitialize(wssUrl, websocket, apiKey, apiSecret))
+            {
+                HttpClient = httpClient;
+            }
+        }
+
+        private bool TryInitialize(string wssUrl, IWebSocket websocket, string apiKey, string apiSecret)
+        {
+            if (IsInitialized)
+            {
+                return false;
+            }
+            IsInitialized = true;
             JsonSettings = new JsonSerializerSettings { FloatParseHandling = FloatParseHandling.Decimal };
             CachedOrderIDs = new ConcurrentDictionary<int, Orders.Order>();
 
@@ -92,9 +164,18 @@ namespace QuantConnect.Brokerages
                 Subscribe(GetSubscribed());
             };
 
-            RestClient = restClient;
             ApiSecret = apiSecret;
             ApiKey = apiKey;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Creates an instance of a websockets brokerage
+        /// </summary>
+        /// <param name="name">Name of brokerage</param>
+        protected BaseWebsocketsBrokerage(string name) : base(name)
+        {
         }
 
         /// <summary>
@@ -102,7 +183,7 @@ namespace QuantConnect.Brokerages
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        public abstract void OnMessage(object sender, WebSocketMessage e);
+        protected abstract void OnMessage(object sender, WebSocketMessage e);
 
         /// <summary>
         /// Creates wss connection, monitors for disconnection and re-connects when necessary
@@ -121,7 +202,7 @@ namespace QuantConnect.Brokerages
         /// Handles the creation of websocket subscriptions
         /// </summary>
         /// <param name="symbols"></param>
-        public abstract void Subscribe(IEnumerable<Symbol> symbols);
+        protected abstract bool Subscribe(IEnumerable<Symbol> symbols);
 
         /// <summary>
         /// Gets a list of current subscriptions
@@ -132,7 +213,10 @@ namespace QuantConnect.Brokerages
             return SubscriptionManager?.GetSubscribedSymbols() ?? Enumerable.Empty<Symbol>();
         }
 
-        private void ConnectSync()
+        /// <summary>
+        /// Start websocket connect
+        /// </summary>
+        protected void ConnectSync()
         {
             var resetEvent = new ManualResetEvent(false);
             EventHandler triggerEvent = (o, args) => resetEvent.Set();

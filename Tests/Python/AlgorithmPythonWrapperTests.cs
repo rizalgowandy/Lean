@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -21,6 +21,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using QuantConnect.Orders;
+using QuantConnect.Lean.Engine.Storage;
+using QuantConnect.Packets;
+using QuantConnect.Storage;
 
 namespace QuantConnect.Tests.Python
 {
@@ -35,7 +38,7 @@ namespace QuantConnect.Tests.Python
             _baseCode = File.ReadAllText(Path.Combine("./RegressionAlgorithms", "Test_AlgorithmPythonWrapper.py"));
         }
 
-        [Test]
+        [TestCase("")]
         [TestCase("def OnEndOfDay(self): pass")]
         [TestCase("def OnEndOfDay(self, symbol): pass")]
         public void CallOnEndOfDayDoesNotThrow(string code)
@@ -149,13 +152,57 @@ namespace QuantConnect.Tests.Python
             }
         }
 
+        [Test]
+        public void PythonAlgorithmGetsAPythonObjectStore()
+        {
+            using (Py.GIL())
+            {
+                var algorithm = GetAlgorithm("def on_end_of_algorithm(self): self.object_store.save_json('trade_log.json', {'a': 1})");
+                using var localStore = new LocalObjectStore();
+                localStore.Initialize(0, 0, "", new Controls() { PersistenceIntervalSeconds = -1 }, AlgorithmMode.Backtesting);
+
+                algorithm.SetObjectStore(localStore);
+
+                Assert.IsInstanceOf<PythonObjectStore>(algorithm.ObjectStore);
+                // the Python helpers are reachable through self.object_store
+                algorithm.OnEndOfAlgorithm();
+                Assert.Null(algorithm.RunTimeError);
+                Assert.AreEqual("{\"a\": 1}", algorithm.ObjectStore.Read("trade_log.json"));
+
+                localStore.Delete("trade_log.json");
+            }
+        }
+
+        [Test]
+        public void PythonAlgorithmKeyWarningGoesThroughDebug()
+        {
+            using (Py.GIL())
+            {
+                var algorithm = GetAlgorithm("def on_end_of_algorithm(self): self.object_store.save('trade log: AI & Cloud.json', '{}')");
+                using var localStore = new LocalObjectStore();
+                localStore.Initialize(0, 0, "", new Controls() { PersistenceIntervalSeconds = -1 }, AlgorithmMode.Backtesting);
+
+                algorithm.SetObjectStore(localStore);
+
+                // the key warning lands in the algorithm's log
+                algorithm.OnEndOfAlgorithm();
+                Assert.Null(algorithm.RunTimeError);
+                Assert.IsTrue(localStore.Keys.Contains("trade log_ AI _ Cloud.json"), string.Join(", ", localStore.Keys));
+                Assert.IsTrue(algorithm.BaseAlgorithm.DebugMessages.TryDequeue(out var warning));
+                Assert.That(warning, Does.Contain("ObjectStore: key 'trade log: AI & Cloud.json' is not supported: unsupported characters ':', '&'."));
+                Assert.That(warning, Does.Contain("Using 'trade log_ AI _ Cloud.json' instead"));
+
+                localStore.Delete("trade log_ AI _ Cloud.json");
+            }
+        }
+
         private AlgorithmPythonWrapper GetAlgorithm(string code)
         {
             code = $"{_baseCode}{Environment.NewLine}    {code}";
 
             using (Py.GIL())
             {
-                 PythonEngine.ModuleFromString("Test_AlgorithmPythonWrapper", code);
+                PyModule.FromString("Test_AlgorithmPythonWrapper", code);
                 return new AlgorithmPythonWrapper("Test_AlgorithmPythonWrapper");
             }
         }

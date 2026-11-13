@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -25,10 +25,10 @@ using QuantConnect.Algorithm.Framework.Execution;
 using QuantConnect.Algorithm.Framework.Portfolio;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
-using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Interfaces;
 using QuantConnect.Orders;
 using QuantConnect.Securities;
+using QuantConnect.Tests.Common.Data.UniverseSelection;
 using QuantConnect.Tests.Engine.DataFeeds;
 
 namespace QuantConnect.Tests.Algorithm.Framework.Execution
@@ -45,7 +45,7 @@ namespace QuantConnect.Tests.Algorithm.Framework.Execution
             var orderProcessor = new Mock<IOrderProcessor>();
             orderProcessor.Setup(m => m.Process(It.IsAny<SubmitOrderRequest>()))
                 .Returns((OrderTicket)null)
-                .Callback((SubmitOrderRequest request) => actualOrdersSubmitted.Add(request));
+                .Callback((OrderRequest request) => actualOrdersSubmitted.Add((SubmitOrderRequest)request));
 
             var algorithm = new QCAlgorithm();
             algorithm.SetPandasConverter();
@@ -55,7 +55,7 @@ namespace QuantConnect.Tests.Algorithm.Framework.Execution
             var model = GetExecutionModel(language);
             algorithm.SetExecution(model);
 
-            var changes = new SecurityChanges(Enumerable.Empty<Security>(), Enumerable.Empty<Security>());
+            var changes = SecurityChangesTests.CreateNonInternal(Enumerable.Empty<Security>(), Enumerable.Empty<Security>());
             model.OnSecuritiesChanged(algorithm, changes);
 
             model.Execute(algorithm, new IPortfolioTarget[0]);
@@ -74,8 +74,6 @@ namespace QuantConnect.Tests.Algorithm.Framework.Execution
             int expectedOrdersSubmitted,
             decimal expectedTotalQuantity)
         {
-            var actualOrdersSubmitted = new List<SubmitOrderRequest>();
-
             var time = new DateTime(2018, 8, 2, 16, 0, 0);
             var historyProvider = new Mock<IHistoryProvider>();
             historyProvider.Setup(m => m.GetHistory(It.IsAny<IEnumerable<HistoryRequest>>(), It.IsAny<DateTimeZone>()))
@@ -93,7 +91,7 @@ namespace QuantConnect.Tests.Algorithm.Framework.Execution
                                 Close = Convert.ToDecimal(x),
                                 Volume = 100m
                             }
-                        })));
+                        }, time.AddMinutes(i))));
 
             var algorithm = new QCAlgorithm();
             algorithm.SetPandasConverter();
@@ -106,31 +104,36 @@ namespace QuantConnect.Tests.Algorithm.Framework.Execution
 
             algorithm.SetFinishedWarmingUp();
 
-            var orderProcessor = new Mock<IOrderProcessor>();
-            orderProcessor.Setup(m => m.Process(It.IsAny<SubmitOrderRequest>()))
-                .Returns((SubmitOrderRequest request) => new OrderTicket(algorithm.Transactions, request))
-                .Callback((SubmitOrderRequest request) => actualOrdersSubmitted.Add(request));
-            orderProcessor.Setup(m => m.GetOpenOrders(It.IsAny<Func<Order, bool>>()))
-                .Returns(new List<Order>());
-            algorithm.Transactions.SetOrderProcessor(orderProcessor.Object);
+            var orderProcessor = ImmediateExecutionModelTests.GetAndSetBrokerageTransactionHandler(algorithm, out var brokerage);
 
-            var model = GetExecutionModel(language);
-            algorithm.SetExecution(model);
-
-            var changes = new SecurityChanges(new[] { security }, Enumerable.Empty<Security>());
-            model.OnSecuritiesChanged(algorithm, changes);
-
-            var targets = new IPortfolioTarget[] { new PortfolioTarget(Symbols.AAPL, 10) };
-            model.Execute(algorithm, targets);
-
-            Assert.AreEqual(expectedOrdersSubmitted, actualOrdersSubmitted.Count);
-            Assert.AreEqual(expectedTotalQuantity, actualOrdersSubmitted.Sum(x => x.Quantity));
-
-            if (actualOrdersSubmitted.Count == 1)
+            try
             {
-                var request = actualOrdersSubmitted[0];
-                Assert.AreEqual(expectedTotalQuantity, request.Quantity);
-                Assert.AreEqual(algorithm.UtcTime, request.Time);
+                var model = GetExecutionModel(language);
+                algorithm.SetExecution(model);
+
+                var changes = SecurityChangesTests.CreateNonInternal(new[] { security }, Enumerable.Empty<Security>());
+                model.OnSecuritiesChanged(algorithm, changes);
+
+                var targets = new IPortfolioTarget[] { new PortfolioTarget(Symbols.AAPL, 10) };
+                model.Execute(algorithm, targets);
+                orderProcessor.ProcessSynchronousEvents();
+
+                var orders = orderProcessor.GetOrders().ToList();
+
+                Assert.AreEqual(expectedOrdersSubmitted, orders.Count);
+                Assert.AreEqual(expectedTotalQuantity, orders.Sum(x => x.Quantity));
+
+                if (expectedOrdersSubmitted == 1)
+                {
+                    var order = orders[0];
+                    Assert.AreEqual(expectedTotalQuantity, order.Quantity);
+                    Assert.AreEqual(algorithm.UtcTime, order.Time);
+                }
+            }
+            finally
+            {
+                orderProcessor.Exit();
+                brokerage?.Dispose();
             }
         }
 
@@ -162,7 +165,7 @@ namespace QuantConnect.Tests.Algorithm.Framework.Execution
 
             var historyProvider = new Mock<IHistoryProvider>();
             historyProvider.Setup(m => m.GetHistory(It.IsAny<IEnumerable<HistoryRequest>>(), It.IsAny<DateTimeZone>()))
-                .Returns(historicalPrices.Select((x, i) => new Slice(time.AddMinutes(i), new List<BaseData> { func(x, i) })));
+                .Returns(historicalPrices.Select((x, i) => new Slice(time.AddMinutes(i), new List<BaseData> { func(x, i) }, time.AddMinutes(i))));
 
             var algorithm = new QCAlgorithm();
             algorithm.SetPandasConverter();
@@ -177,8 +180,100 @@ namespace QuantConnect.Tests.Algorithm.Framework.Execution
             var model = GetExecutionModel(language);
             algorithm.SetExecution(model);
 
-            var changes = new SecurityChanges(new[] { security }, Enumerable.Empty<Security>());
+            var changes = SecurityChangesTests.CreateNonInternal(new[] { security }, Enumerable.Empty<Security>());
             Assert.DoesNotThrow(() => model.OnSecuritiesChanged(algorithm, changes));
+        }
+
+        [TestCase(Language.CSharp)]
+        [TestCase(Language.Python)]
+        public void ReAddedSecurityGetsFreshSymbolData(Language language)
+        {
+            var time = new DateTime(2018, 8, 2, 16, 0, 0);
+            var historicalPrice = 100m;
+
+            var historyProvider = new Mock<IHistoryProvider>();
+            historyProvider.Setup(m => m.GetHistory(It.IsAny<IEnumerable<HistoryRequest>>(), It.IsAny<DateTimeZone>()))
+                .Returns(() => CreateHistory(time, historicalPrice));
+
+            var algorithm = new QCAlgorithm();
+            algorithm.SetHistoryProvider(historyProvider.Object);
+            algorithm.SubscriptionManager.SetDataManager(new DataManagerStub(algorithm));
+            algorithm.SetDateTime(time.AddMinutes(5));
+
+            var security = algorithm.AddEquity(Symbols.AAPL.Value);
+            algorithm.SetFinishedWarmingUp();
+
+            var orderProcessor = ImmediateExecutionModelTests.GetAndSetBrokerageTransactionHandler(algorithm, out var brokerage);
+            try
+            {
+                var model = GetExecutionModel(language);
+                algorithm.SetExecution(model);
+                model.OnSecuritiesChanged(algorithm, SecurityChangesTests.CreateNonInternal(new[] { security }, Enumerable.Empty<Security>()));
+
+                // the SMA is around $100 and the quote sits below it, so selling is not favorable
+                security.SetMarketPrice(new TradeBar { Time = time, Symbol = Symbols.AAPL, Close = 100m });
+                security.SetMarketPrice(new Tick(time, Symbols.AAPL, 99.98m, 99.99m));
+
+                var subscription = security.Subscriptions.First();
+                var consolidators = subscription.Consolidators.ToList();
+
+                // The engine reports a removal only once, when the security is deselected. When the removal
+                // is deferred because a position is still open, the data subscription and its consolidators
+                // are taken down later without another notification, so the model is never told to clear
+                // its cached symbol data.
+                security.Reset();
+                algorithm.Securities.Remove(security.Symbol);
+                foreach (var consolidator in consolidators)
+                {
+                    algorithm.SubscriptionManager.RemoveConsolidator(security.Symbol, consolidator);
+                }
+
+                // the symbol is selected again and gets its data subscription back
+                historicalPrice = 50m;
+                security.AddData(subscription);
+                security.MakeTradable();
+                algorithm.Securities.Add(security);
+
+                model.OnSecuritiesChanged(algorithm, SecurityChangesTests.CreateNonInternal(new[] { security }, Enumerable.Empty<Security>()));
+
+                // the price is now far below the SMA computed for the previous subscription
+                security.SetMarketPrice(new TradeBar { Time = time.AddMinutes(1), Symbol = Symbols.AAPL, Close = 50m });
+                security.SetMarketPrice(new Tick(time.AddMinutes(1), Symbols.AAPL, 50m, 50.01m));
+
+                // ask price of $50.01 is above the new SMA of $50, so selling is favorable
+                model.Execute(algorithm, new IPortfolioTarget[] { new PortfolioTarget(Symbols.AAPL, -10) });
+                orderProcessor.ProcessSynchronousEvents();
+
+                var orders = orderProcessor.GetOrders().ToList();
+                Assert.AreEqual(1, orders.Count);
+                Assert.AreEqual(-10, orders[0].Quantity);
+            }
+            finally
+            {
+                orderProcessor.Exit();
+                brokerage?.Dispose();
+            }
+        }
+
+        private static IEnumerable<Slice> CreateHistory(DateTime time, decimal price)
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                yield return new Slice(time.AddMinutes(i),
+                    new List<BaseData>
+                    {
+                        new TradeBar
+                        {
+                            Time = time.AddMinutes(i),
+                            Symbol = Symbols.AAPL,
+                            Open = price,
+                            High = price,
+                            Low = price,
+                            Close = price,
+                            Volume = 100m
+                        }
+                    }, time.AddMinutes(i));
+            }
         }
 
         private static IExecutionModel GetExecutionModel(Language language)

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -14,13 +14,13 @@
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using QuantConnect.Util;
 using QuantConnect.Orders;
+using Newtonsoft.Json.Linq;
 using QuantConnect.Packets;
 using QuantConnect.Securities;
+using System.Collections.Generic;
 
 namespace QuantConnect.Api
 {
@@ -73,131 +73,78 @@ namespace QuantConnect.Api
         {
             var jObject = JObject.Load(reader);
 
-            var liveResults = CreateLiveResultsFromJObject(jObject);
-
-            return liveResults;
-        }
-
-        /// <summary>
-        /// Custom parsing of live results data
-        /// </summary>
-        /// <param name="jObject">Json representing LiveResults</param>
-        /// <returns></returns>
-        public static LiveAlgorithmResults CreateLiveResultsFromJObject(JObject jObject)
-        {
+            // `files` and `charts` need their own deserialization, and every field is optional since an
+            // errored or not yet started deployment only reports a subset of them
             var liveAlgoResults = new LiveAlgorithmResults
             {
-                Success = jObject["success"].Value<bool>()
+                Message = jObject.Value<string>("message"),
+                Status = jObject.Value<string>("status"),
+                DeployId = jObject.Value<string>("deployId"),
+                CloneId = jObject.Value<int>("cloneId"),
+                Launched = jObject.Value<DateTime>("launched"),
+                Stopped = jObject.Value<DateTime?>("stopped"),
+                Brokerage = jObject.Value<string>("brokerage"),
+                SecurityTypes = jObject.Value<string>("securityTypes"),
+                ProjectName = jObject.Value<string>("projectName"),
+                Description = jObject.Value<string>("description"),
+                Datacenter = jObject.Value<string>("datacenter"),
+                Public = jObject.Value<bool>("public"),
+                Success = jObject.Value<bool>("success"),
+                Errors = jObject["errors"]?.ToObject<List<string>>() ?? new List<string>()
             };
 
-            var success = jObject["success"].Value<bool>();
-            if (!success)
+            if (!liveAlgoResults.Success)
             {
-                // Either there was an error in the running algrithm or the algorithm hasn't started
-                liveAlgoResults.Errors = jObject.Last.Children().Select(error => error.ToString()).ToList();
+                // Either there was an error in the running algorithm or the algorithm hasn't started
                 return liveAlgoResults;
             }
 
-            liveAlgoResults.Success = true;
-            liveAlgoResults.LiveResults = new LiveResultsData
-            {
-                Resolution = (Resolution)Enum.Parse(typeof(Resolution), jObject["LiveResults"]["resolution"].Value<string>(), true),
-                Version    = jObject["LiveResults"]["version"].Value<int>()
-            };
-
-            // Results json
-            var results = jObject["LiveResults"]["results"];
-
             // Deserialize charting data
-            var charts = results["Charts"];
             var chartDictionary = new Dictionary<string, Chart>();
-
-            foreach (var chart in charts.Children())
+            var charts = jObject["charts"] ?? jObject["Charts"];
+            if (charts != null)
             {
-                var newChart = new Chart(((JProperty) chart).Name)
+                var stringCharts = jObject["charts"]?.ToString() ?? jObject["Charts"].ToString();
+                if(!string.IsNullOrEmpty(stringCharts))
                 {
-                    Series = GetChartSeries(chart.First()["Series"])
-                };
-
-                chartDictionary.Add(newChart.Name, newChart);
+                    chartDictionary = JsonConvert.DeserializeObject<Dictionary<string, Chart>>(stringCharts);
+                }
             }
 
-            // Live Results - At this time only that charting data can be returned from the api (9/30/2016)
-            liveAlgoResults.LiveResults.Results = new LiveResult(new LiveResultParameters(chartDictionary,
-                new Dictionary<int, Order>(),
-                new Dictionary<DateTime, decimal>(),
-                new Dictionary<string, Holding>(),
-                new CashBook(),
-                new Dictionary<string, string>(),
-                new Dictionary<string, string>(),
-                new List<OrderEvent>())
-            );
+            // Deserialize files data
+            var projectFiles = new List<ProjectFile>();
+            var files = jObject["files"] ?? jObject["Files"];
+            if (files != null)
+            {
+                var stringFiles = jObject["files"]?.ToString() ?? jObject["Files"].ToString();
+                if (!string.IsNullOrEmpty(stringFiles))
+                {
+                    projectFiles = JsonConvert.DeserializeObject<List<ProjectFile>>(stringFiles);
+                }
+            }
+
+            liveAlgoResults.Charts = chartDictionary;
+            liveAlgoResults.Files = projectFiles;
+            liveAlgoResults.RuntimeStatistics = DeserializeDictionary(jObject, "runtimeStatistics", "RuntimeStatistics");
+            liveAlgoResults.ServerStatistics = DeserializeDictionary(jObject, "serverStatistics", "ServerStatistics");
+            liveAlgoResults.DeploymentDetails = DeserializeDictionary(jObject, "deploymentDetails", "DeploymentDetails");
 
             return liveAlgoResults;
         }
 
         /// <summary>
-        /// Get series data for a specific chart
+        /// Deserializes a string dictionary, if the given json holds one. Older deployments were
+        /// run before some of them were reported, so they are all optional
         /// </summary>
-        /// <param name="series">Series data and properties for a chart</param>
-        /// <returns>Dictionary with the name of the series as the key and the Series itself as the value</returns>
-        private static Dictionary<string, Series> GetChartSeries(JToken series)
+        private static IDictionary<string, string> DeserializeDictionary(JObject jObject, string name, string alternativeName)
         {
-            var chartSeriesDict = new Dictionary<string, Series>();
-
-            foreach (var child in series.Children())
+            var value = jObject[name] ?? jObject[alternativeName];
+            if (value == null || value.Type != JTokenType.Object)
             {
-                var s = child.First();
-                var newSeries = new Series(((JProperty) child).Name)
-                {
-                    SeriesType = (SeriesType) s["SeriesType"].Value<int>(),
-                    Values     = GetSeriesValues(s["Values"])
-                };
-
-                chartSeriesDict.Add(newSeries.Name, newSeries);
+                return null;
             }
 
-            return chartSeriesDict;
-        }
-
-        /// <summary>
-        /// Get x and y value pairs that represent series data
-        /// </summary>
-        /// <param name="values">json array of x, y value pairs</param>
-        /// <returns>List of ChartPoints</returns>
-        private static List<ChartPoint> GetSeriesValues(JToken values)
-        {
-            var chartPoints = new List<ChartPoint>();
-
-            // Special ChartPoint that only represents time (only has x component)
-            if (values.Children().Count() == 1)
-            {
-                var point = values.Children().First();
-                var x = point["x"];
-
-                chartPoints.Add(new ChartPoint((long)x, 0));
-            }
-            // Typical series of values that is used for charting
-            else
-            {
-                foreach (var point in values.Children())
-                {
-                    var x = point["x"];
-                    var y = point["y"];
-
-                    // this piece of code is why this entire custom serializer is necessary
-                    if (y != null && y.Type == JTokenType.Float)
-                    {
-                        chartPoints.Add(new ChartPoint((long)x, (decimal)y));
-                    }
-                    else
-                    {
-                        chartPoints.Add(null);
-                    }
-                }
-            }
-
-            return chartPoints;
+            return value.ToObject<Dictionary<string, string>>();
         }
     }
 }

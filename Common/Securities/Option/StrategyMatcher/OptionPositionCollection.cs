@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -14,11 +14,12 @@
 */
 
 using System;
+using System.Linq;
+using QuantConnect.Util;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
-using QuantConnect.Util;
+using QuantConnect.Securities.Positions;
 
 namespace QuantConnect.Securities.Option.StrategyMatcher
 {
@@ -43,6 +44,7 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         private readonly ImmutableDictionary<PositionSide, ImmutableHashSet<Symbol>> _sides;
         private readonly ImmutableSortedDictionary<decimal,  ImmutableHashSet<Symbol>> _strikes;
         private readonly ImmutableSortedDictionary<DateTime, ImmutableHashSet<Symbol>> _expirations;
+        private OptionPosition[] _orderedPositions;
 
         /// <summary>
         /// Gets the underlying security's symbol
@@ -199,18 +201,27 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         }
 
         /// <summary>
-        /// Gets the underlying security's position
-        /// </summary>
-        /// <returns></returns>
-        public OptionPosition GetUnderlyingPosition()
-            => LinqExtensions.GetValueOrDefault(_positions, Underlying, new OptionPosition(Underlying, 0));
-
-        /// <summary>
         /// Creates a new <see cref="OptionPositionCollection"/> from the specified enumerable of <paramref name="positions"/>
         /// </summary>
         public static OptionPositionCollection FromPositions(IEnumerable<OptionPosition> positions)
         {
             return Empty.AddRange(positions);
+        }
+
+        /// <summary>
+        /// Creates a new <see cref="OptionPositionCollection"/> from the specified enumerable of <paramref name="positions"/>
+        /// </summary>
+        public static OptionPositionCollection FromPositions(IEnumerable<IPosition> positions, decimal contractMultiplier)
+        {
+            return Empty.AddRange(positions.Select(position =>
+            {
+                var quantity = (int)position.Quantity;
+                if (position.Symbol.SecurityType.HasOptions())
+                {
+                    quantity = (int) (quantity / contractMultiplier);
+                }
+                return new OptionPosition(position.Symbol, quantity);
+            }));
         }
 
         /// <summary>
@@ -559,7 +570,41 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         /// <returns>An enumerator that can be used to iterate through the collection.</returns>
         public IEnumerator<OptionPosition> GetEnumerator()
         {
-            return _positions.Select(kvp => kvp.Value).GetEnumerator();
+            // hash order depends on per-process string hashes, so a fixed order keeps matching reproducible
+            if (_orderedPositions == null)
+            {
+                var positions = _positions.Values.ToArray();
+                Array.Sort(positions, ComparePositions);
+                _orderedPositions = positions;
+            }
+            return ((IEnumerable<OptionPosition>)_orderedPositions).GetEnumerator();
+        }
+
+        private static int ComparePositions(OptionPosition left, OptionPosition right)
+        {
+            if (left.IsUnderlying != right.IsUnderlying)
+            {
+                return left.IsUnderlying ? -1 : 1;
+            }
+
+            if (!left.IsUnderlying)
+            {
+                var comparison = left.Expiration.CompareTo(right.Expiration);
+                if (comparison == 0)
+                {
+                    comparison = left.Strike.CompareTo(right.Strike);
+                }
+                if (comparison == 0)
+                {
+                    comparison = left.Right.CompareTo(right.Right);
+                }
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+            }
+
+            return left.Symbol.ID.CompareTo(right.Symbol.ID);
         }
 
         /// <summary>

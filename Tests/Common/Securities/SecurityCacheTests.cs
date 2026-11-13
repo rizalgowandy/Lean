@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -18,11 +18,20 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using Python.Runtime;
 using QuantConnect.Algorithm.CSharp;
 using QuantConnect.Data;
 using QuantConnect.Data.Fundamental;
 using QuantConnect.Data.Market;
+using QuantConnect.Data.UniverseSelection;
+using QuantConnect.Python;
 using QuantConnect.Securities;
+using QuantConnect.Securities.Future;
+using QuantConnect.Securities.FutureOption;
+using QuantConnect.Securities.IndexOption;
+using QuantConnect.Securities.Option;
+using QuantConnect.Tests.Common.Data.Fundamental;
+using QuantConnect.Util;
 
 namespace QuantConnect.Tests.Common.Securities
 {
@@ -32,6 +41,12 @@ namespace QuantConnect.Tests.Common.Securities
         private static readonly DateTime ReferenceTime = new DateTime(2000, 01, 01);
 
         private readonly Random _rng = new Random(Seed: 123);
+
+        [SetUp]
+        public void Setup()
+        {
+            FundamentalService.Initialize(TestGlobals.DataProvider, new NullFundamentalDataProvider(), false);
+        }
 
         [TestCase(MarketDataType.TradeBar, 10, true)]
         [TestCase(MarketDataType.TradeBar, 10, false)]
@@ -207,6 +222,12 @@ namespace QuantConnect.Tests.Common.Securities
                     Assert.IsFalse(cache.HasData(typeof(Tick)));
                     Assert.AreEqual(cache.GetAll<Tick>().Count(x => x.TickType == TickType.Trade), 0);
                     break;
+                case SecuritySeedData.Fundamentals:
+                    Assert.IsNotNull(cache.GetData());
+                    Assert.IsNotNull(cache.GetData<Fundamental>());
+                    cache.Reset();
+                    Assert.IsFalse(cache.HasData(typeof(Fundamental)));
+                    break;
                 default:
                     Assert.IsNotNull(cache.GetData());
                     cache.Reset();
@@ -372,7 +393,7 @@ namespace QuantConnect.Tests.Common.Securities
         public void AddDataFundamentals_DoesNotChangeCacheValues(SecurityCache cache, SecuritySeedData seedType)
         {
             var map = new Dictionary<string, string>();
-            AddDataAndAssertChanges(cache, seedType, SecuritySeedData.Fundamentals, new Fundamentals
+            AddDataAndAssertChanges(cache, seedType, SecuritySeedData.Fundamentals, new Fundamental(ReferenceTime, Symbols.AAPL)
             {
                 Value = 111,
                 EndTime = ReferenceTime
@@ -405,6 +426,137 @@ namespace QuantConnect.Tests.Common.Securities
             Assert.AreEqual(securityCache.BidPrice, 0m);
             Assert.AreEqual(securityCache.AskPrice, 0m);
             Assert.AreEqual(securityCache.Volume, volume);
+        }
+
+        [TestCaseSource(nameof(ChainUniverseOpenInterestCacheTypes))]
+        public void StoreData_ChainUniverseData_SetsOpenInterest(Type cacheType)
+        {
+            var cache = (SecurityCache)Activator.CreateInstance(cacheType);
+            var universeData = CreateChainUniverseData(cache, new DateTime(2016, 02, 18), 1234);
+
+            cache.StoreData(new[] { universeData }, universeData.GetType());
+
+            Assert.AreEqual(1234, cache.OpenInterest);
+            Assert.IsTrue(cache.HasData(universeData.GetType()));
+        }
+
+        [Test]
+        public void StoreData_ChainUniverseData_DoesNotSetOpenInterestOnBaseCache()
+        {
+            var cache = new SecurityCache();
+            var universeData = CreateChainUniverseData(cache, new DateTime(2016, 02, 18), 1234);
+
+            cache.StoreData(new[] { universeData }, universeData.GetType());
+
+            Assert.AreEqual(0, cache.OpenInterest);
+            Assert.IsTrue(cache.HasData(universeData.GetType()));
+        }
+
+        [TestCaseSource(nameof(ChainUniverseOpenInterestCacheTypes))]
+        public void StoreData_ChainUniverseData_DoesNotOverrideNewerOpenInterestTick(Type cacheType)
+        {
+            var cache = (SecurityCache)Activator.CreateInstance(cacheType);
+            var universeData = CreateChainUniverseData(cache, new DateTime(2016, 02, 18), 1234);
+
+            // In live trading the chain universe file of the previous tradable date is fed into the algorithm
+            // after the open interest tick of the day was already received
+            var openInterestTick = new OpenInterest(universeData.EndTime.AddHours(6), universeData.Symbol, 5000);
+            cache.AddDataList(new[] { openInterestTick }, typeof(OpenInterest));
+            Assert.AreEqual(5000, cache.OpenInterest);
+
+            cache.StoreData(new[] { universeData }, universeData.GetType());
+
+            Assert.AreEqual(5000, cache.OpenInterest);
+            // The universe data point is still stored in the cache
+            Assert.IsTrue(cache.HasData(universeData.GetType()));
+        }
+
+        [TestCaseSource(nameof(ChainUniverseOpenInterestCacheTypes))]
+        public void StoreData_ChainUniverseData_DoesNotOverrideOpenInterestTickWithSameEndTime(Type cacheType)
+        {
+            var cache = (SecurityCache)Activator.CreateInstance(cacheType);
+            var universeData = CreateChainUniverseData(cache, new DateTime(2016, 02, 18), 1234);
+
+            // Daily open interest data is stamped at midnight, matching the end time of the previous date's chain universe data
+            var openInterestTick = new OpenInterest(universeData.EndTime, universeData.Symbol, 5000);
+            cache.AddData(openInterestTick);
+            Assert.AreEqual(5000, cache.OpenInterest);
+
+            cache.StoreData(new[] { universeData }, universeData.GetType());
+
+            Assert.AreEqual(5000, cache.OpenInterest);
+        }
+
+        [TestCaseSource(nameof(ChainUniverseOpenInterestCacheTypes))]
+        public void StoreData_ChainUniverseData_OverridesOlderOpenInterestTick(Type cacheType)
+        {
+            var cache = (SecurityCache)Activator.CreateInstance(cacheType);
+            var universeData = CreateChainUniverseData(cache, new DateTime(2016, 02, 18), 1234);
+
+            // In backtesting the chain universe data of the day is emitted at the end of the day,
+            // after the open interest ticks of the day
+            var openInterestTick = new OpenInterest(universeData.EndTime.AddHours(-6), universeData.Symbol, 5000);
+            cache.AddData(openInterestTick);
+            Assert.AreEqual(5000, cache.OpenInterest);
+
+            cache.StoreData(new[] { universeData }, universeData.GetType());
+
+            Assert.AreEqual(1234, cache.OpenInterest);
+        }
+
+        [TestCaseSource(nameof(ChainUniverseOpenInterestCacheTypes))]
+        public void OpenInterestTick_OverridesChainUniverseDataOpenInterest(Type cacheType)
+        {
+            var cache = (SecurityCache)Activator.CreateInstance(cacheType);
+            var date = new DateTime(2016, 02, 18);
+            var universeData = CreateChainUniverseData(cache, date, 1234);
+            cache.StoreData(new[] { universeData }, universeData.GetType());
+            Assert.AreEqual(1234, cache.OpenInterest);
+
+            // A newer open interest tick always overrides the universe open interest
+            var openInterestTick = new OpenInterest(universeData.EndTime.AddHours(6), universeData.Symbol, 5000);
+            cache.AddData(openInterestTick);
+            Assert.AreEqual(5000, cache.OpenInterest);
+
+            // And the next day's universe data is newer than the tick so it overrides it
+            var nextUniverseData = CreateChainUniverseData(cache, date.AddDays(1), 4321);
+            cache.StoreData(new[] { nextUniverseData }, nextUniverseData.GetType());
+            Assert.AreEqual(4321, cache.OpenInterest);
+        }
+
+        [TestCaseSource(nameof(ChainUniverseOpenInterestCacheTypes))]
+        public void Reset_ClearsLastOpenInterestUpdateTime(Type cacheType)
+        {
+            var cache = (SecurityCache)Activator.CreateInstance(cacheType);
+            var universeData = CreateChainUniverseData(cache, new DateTime(2016, 02, 18), 1234);
+            var openInterestTick = new OpenInterest(universeData.EndTime.AddHours(6), universeData.Symbol, 5000);
+            cache.AddData(openInterestTick);
+
+            cache.Reset();
+            Assert.AreEqual(0, cache.OpenInterest);
+
+            cache.StoreData(new[] { universeData }, universeData.GetType());
+
+            Assert.AreEqual(1234, cache.OpenInterest);
+        }
+
+        private static readonly Type[] ChainUniverseOpenInterestCacheTypes =
+        {
+            typeof(OptionCache),
+            typeof(IndexOptionCache),
+            typeof(FutureOptionCache),
+            typeof(FutureCache)
+        };
+
+        private static BaseChainUniverseData CreateChainUniverseData(SecurityCache cache, DateTime date, decimal openInterest)
+        {
+            // open,high,low,close,volume,open_interest
+            var csv = $"100,101,99,100,5000,{openInterest.ToStringInvariant()}";
+            if (cache is FutureCache)
+            {
+                return new FutureUniverse(date, Symbols.Future_ESZ18_Dec2018, csv);
+            }
+            return new OptionUniverse(date, Symbols.SPY_C_192_Feb19_2016, csv);
         }
 
         [Test]
@@ -440,6 +592,71 @@ namespace QuantConnect.Tests.Common.Securities
             Assert.AreEqual(2, data.Count);
             Assert.AreEqual(1m, data[0].Ask);
             Assert.AreEqual(2m, data[1].Ask);
+        }
+
+        [Test]
+        public void SecurityCacheGetDataWorksCorrectly()
+        {
+            using (Py.GIL())
+            {
+                var testModule = PyModule.FromString("TestSecurityCacheGetData",
+                    @"
+from AlgorithmImports import *
+from QuantConnect.Tests import *
+
+class MyCustomDataType(PythonData):
+    def get_source(self, config: SubscriptionDataConfig, date: datetime, is_live: bool) -> SubscriptionDataSource:
+        fileName = LeanData.GenerateZipFileName(Symbols.SPY, date, Resolution.MINUTE, config.TickType)
+
+    def reader(self, config: SubscriptionDataConfig, line: str, date: datetime, is_live: bool) -> BaseData:
+        data = line.split(',')
+        result = MyCustomDataType()
+
+def get_security_cache_quote():
+    securityCache = SecurityCache()
+    quoteBar = QuoteBar()
+    securityCache.add_data(quoteBar)
+    return securityCache.get_data(QuoteBar)
+
+def get_security_cache_trade():
+    securityCache = SecurityCache()
+    tradeBar = TradeBar()
+    securityCache.add_data(tradeBar)
+    return securityCache.get_data(TradeBar)
+
+def get_security_cache_margin_interest_rate():
+    securityCache = SecurityCache()
+    marginInterestRate = MarginInterestRate()
+    securityCache.add_data(marginInterestRate)
+    return securityCache.get_data(MarginInterestRate)
+
+def get_security_cache_custom_data_type():
+    securityCache = SecurityCache()
+    customData = PythonData(MyCustomDataType())
+    securityCache.add_data(customData)
+    return securityCache.get_data(MyCustomDataType)
+");
+
+                // Test if the GetData method correctly handles QuoteBar type
+                var quoteType = testModule.GetAttr("get_security_cache_quote").Invoke();
+                Assert.IsFalse(quoteType.IsNone());
+                Assert.DoesNotThrow(() => quoteType.As<QuoteBar>());
+
+                // Test if the GetData method correctly handles TradeBar type
+                var tradeType = testModule.GetAttr("get_security_cache_trade").Invoke();
+                Assert.IsFalse(tradeType.IsNone());
+                Assert.DoesNotThrow(() => tradeType.As<TradeBar>());
+
+                // Test if the GetData method correctly handles MarginInterestRate type
+                var marginInterestType = testModule.GetAttr("get_security_cache_margin_interest_rate").Invoke();
+                Assert.IsFalse(marginInterestType.IsNone());
+                Assert.DoesNotThrow(() => marginInterestType.As<MarginInterestRate>());
+
+                // Test if the GetData method correctly handles custom data type (PythonData)
+                var customDataType = testModule.GetAttr("get_security_cache_custom_data_type").Invoke();
+                Assert.IsFalse(customDataType.IsNone());
+                Assert.DoesNotThrow(() => customDataType.As<PythonData>());
+            }
         }
 
         private void AddDataAndAssertChanges(SecurityCache cache, SecuritySeedData seedType, SecuritySeedData dataType, BaseData data, Dictionary<string, string> cacheToBaseDataPropertyMap = null)
@@ -595,7 +812,7 @@ namespace QuantConnect.Tests.Common.Securities
             });
 
             var fundamentals = new SecurityCache();
-            fundamentals.AddData(new Fundamentals
+            fundamentals.AddData(new Fundamental(ReferenceTime, Symbols.AAPL)
             {
                 Value = 23
             });

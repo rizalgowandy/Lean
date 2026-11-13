@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -14,8 +14,8 @@
 */
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace QuantConnect.Securities.Option.StrategyMatcher
 {
@@ -58,11 +58,19 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         }
 
         /// <summary>
-        /// Deducts the matched positions from the specified <paramref name="positions"/>
+        /// Deducts the matched positions from the specified <paramref name="positions"/> taking into account the multiplier
         /// </summary>
         public OptionPositionCollection RemoveFrom(OptionPositionCollection positions)
         {
-            return positions.RemoveRange(Legs.Select(leg => leg.Position));
+            var optionPositions = Legs.Select(leg => leg.CreateOptionPosition(Multiplier));
+            if (Definition.UnderlyingLots != 0)
+            {
+                optionPositions = optionPositions.Concat(new[]
+                {
+                    new OptionPosition(Legs[0].Position.Symbol.Underlying, Definition.UnderlyingLots * Multiplier)
+                });
+            }
+            return positions.RemoveRange(optionPositions);
         }
 
         /// <summary>
@@ -70,14 +78,17 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         /// </summary>
         public OptionStrategy CreateStrategy()
         {
-            var legs = Legs.Select(leg => leg.CreateOptionStrategyLeg(Multiplier));
-            var strategy = new OptionStrategy {Name = Definition.Name, Underlying = Legs[0].Position.Underlying};
-            foreach (var leg in legs)
+            var legs = Legs
+                // if Definition.UnderlyingLots is not 0, we will create the underlying leg separately
+                .Where(leg => leg.Position.Symbol.HasUnderlying || Definition.UnderlyingLots == 0)
+                .Select(leg => leg.CreateOptionStrategyLeg(Multiplier));
+
+            if (Definition.UnderlyingLots != 0)
             {
-                leg.Invoke(strategy.UnderlyingLegs.Add, strategy.OptionLegs.Add);
+                legs = legs.Concat([OptionStrategy.UnderlyingLegData.Create(Definition.UnderlyingLots * Multiplier, Legs[0].Position.Underlying)]);
             }
 
-            return strategy;
+            return OptionStrategy.Create(Definition.Name, legs);
         }
 
         /// <summary>Indicates whether the current object is equal to another object of the same type.</summary>

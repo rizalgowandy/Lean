@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -17,6 +17,7 @@ using Deedle;
 using NUnit.Framework;
 using QuantConnect.Orders;
 using QuantConnect.Report;
+using QuantConnect.Brokerages;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -177,6 +178,94 @@ namespace QuantConnect.Tests.Report
                     Assert.AreEqual(option.Underlying, pointInTimePortfolio.Order.Symbol.Underlying);
                 }
             });
+        }
+
+        [TestCase("BNTUSDT", "USDT")]
+        [TestCase("AUDBUSD", "BUSD")]
+        public void OrderProcessedInLooper_WithNonDefaultAlgorithmSettings(string symbol, string currency)
+        {
+            var equityPoints = new SortedList<DateTime, double>
+            {
+                { new DateTime(2020, 2, 12, 20, 0, 0), 100000 },
+                { new DateTime(2020, 2, 13, 20, 0, 0), 900000 },
+            };
+            var series = new Series<DateTime, double>(equityPoints);
+            var orderPrice = 0.35m;
+            var orderQuantity = 30000m;
+            var order = Order.CreateOrder(new SubmitOrderRequest(
+                OrderType.Market,
+                SecurityType.Crypto,
+                Symbol.Create(symbol, SecurityType.Crypto, Market.Binance),
+                orderQuantity,
+                0m,
+                0m,
+                new DateTime(2020, 2, 12, 20, 0, 0),
+                string.Empty
+            ));
+            order.LastFillTime = new DateTime(2020, 2, 12, 20, 0, 0);
+            order.GetType().GetProperty("Id").SetValue(order, 1);
+            order.GetType().GetProperty("Status").SetValue(order, OrderStatus.Filled);
+            order.GetType().GetProperty("Price").SetValue(order, orderPrice);
+            var orders = new[] { order };
+
+            var looper = PortfolioLooper.FromOrders(series, orders,
+                new AlgorithmConfiguration("AlgorightmName", new HashSet<string>(), currency, BrokerageName.Binance, AccountType.Cash,
+                    new Dictionary<string, string>(), DateTime.MinValue, DateTime.MinValue, null, 0));
+            var pointInTimePortfolio = looper.ToList();
+
+            Assert.AreEqual(2, pointInTimePortfolio.Count);
+            Assert.AreEqual(100000m, pointInTimePortfolio[0].TotalPortfolioValue);
+
+            var holdings = pointInTimePortfolio[0].Holdings;
+            Assert.AreEqual(1, holdings.Count);
+            Assert.AreEqual(orderQuantity, holdings[0].Quantity);
+            Assert.AreEqual(orderQuantity * orderPrice, holdings[0].HoldingsValue);
+        }
+
+        [Test]
+        public void PointInTimePortfolioOnlyKeepsOpenHoldingsAndOrderSymbol()
+        {
+            var equityPoints = new SortedList<DateTime, double>
+            {
+                { new DateTime(2019, 1, 3, 5, 0, 0), 100000 },
+                { new DateTime(2019, 1, 6, 5, 0, 0), 100000 },
+            };
+            var series = new Series<DateTime, double>(equityPoints);
+            var orders = new List<Order>
+            {
+                CreateFilledOrder(1, Symbols.SPY, 10, new DateTime(2019, 1, 3, 15, 0, 0)),
+                CreateFilledOrder(2, Symbols.AAPL, 10, new DateTime(2019, 1, 3, 16, 0, 0)),
+                CreateFilledOrder(3, Symbols.SPY, -10, new DateTime(2019, 1, 4, 15, 0, 0)),
+                CreateFilledOrder(4, Symbols.AAPL, 5, new DateTime(2019, 1, 5, 15, 0, 0))
+            };
+
+            var pointInTimePortfolio = PortfolioLooper.FromOrders(series, orders).ToList();
+
+            Assert.AreEqual(5, pointInTimePortfolio.Count);
+            CollectionAssert.AreEquivalent(new[] { Symbols.SPY }, pointInTimePortfolio[0].Holdings.Select(x => x.Symbol));
+            CollectionAssert.AreEquivalent(new[] { Symbols.SPY, Symbols.AAPL }, pointInTimePortfolio[1].Holdings.Select(x => x.Symbol));
+
+            // the closing order keeps its symbol, so its asset class is still represented
+            CollectionAssert.AreEquivalent(new[] { Symbols.SPY, Symbols.AAPL }, pointInTimePortfolio[2].Holdings.Select(x => x.Symbol));
+            Assert.AreEqual(0, pointInTimePortfolio[2].Holdings.Single(x => x.Symbol == Symbols.SPY).Quantity);
+
+            // once closed, a position is no longer part of the snapshot
+            foreach (var portfolio in pointInTimePortfolio.Skip(3))
+            {
+                var holding = portfolio.Holdings.Single();
+                Assert.AreEqual(Symbols.AAPL, holding.Symbol);
+                Assert.AreEqual(15, holding.Quantity);
+            }
+        }
+
+        private static Order CreateFilledOrder(int id, Symbol symbol, decimal quantity, DateTime time)
+        {
+            var order = Order.CreateOrder(new SubmitOrderRequest(OrderType.Market, SecurityType.Equity, symbol, quantity, 0m, 0m, time, string.Empty));
+            order.LastFillTime = time;
+            order.GetType().GetProperty("Id").SetValue(order, id);
+            order.GetType().GetProperty("Price").SetValue(order, 100m);
+            order.GetType().GetProperty("Status").SetValue(order, OrderStatus.Filled);
+            return order;
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -22,6 +22,7 @@ using QuantConnect.Orders.Fees;
 using QuantConnect.Orders.TimeInForces;
 using QuantConnect.Securities;
 using QuantConnect.Securities.Crypto;
+using QuantConnect.Securities.CryptoFuture;
 using QuantConnect.Securities.Equity;
 using QuantConnect.Securities.Forex;
 using QuantConnect.Tests.Common.Securities;
@@ -111,6 +112,61 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             Assert.IsTrue(timeInForce.IsFillValid(security, order, fill2));
         }
 
+        [TestCase("2018-04-27 10:00", "2018-04-27 16:00")]
+        // early close
+        [TestCase("2016-11-25 10:00", "2016-11-25 13:00")]
+        // submitted after the close, it's for the next trading day close
+        [TestCase("2018-04-27 16:30", "2018-04-30 16:00")]
+        public void DayTimeInForceEquityMarketOnCloseOrderExpiresAtEndOfCloseDay(string orderTime, string marketClose)
+        {
+            var orderUtcTime = Parse.DateTime(orderTime).ConvertToUtc(TimeZones.NewYork);
+            var marketCloseUtcTime = Parse.DateTime(marketClose).ConvertToUtc(TimeZones.NewYork);
+            var endOfDayUtcTime = Parse.DateTime(marketClose).Date.AddDays(1).ConvertToUtc(TimeZones.NewYork);
+
+            var security = new Equity(
+                SecurityExchangeHoursTests.CreateUsEquitySecurityExchangeHours(),
+                new SubscriptionDataConfig(
+                    typeof(TradeBar),
+                    Symbols.SPY,
+                    Resolution.Minute,
+                    TimeZones.NewYork,
+                    TimeZones.NewYork,
+                    true,
+                    true,
+                    true
+                ),
+                new Cash(Currencies.USD, 0, 1m),
+                SymbolProperties.GetDefault(Currencies.USD),
+                ErrorCurrencyConverter.Instance,
+                RegisteredSecurityDataTypesProvider.Null
+            );
+            var localTimeKeeper = new LocalTimeKeeper(orderUtcTime, TimeZones.NewYork);
+            security.SetLocalTimeKeeper(localTimeKeeper);
+
+            var timeInForce = TimeInForce.Day;
+            var orderProperties = new OrderProperties { TimeInForce = timeInForce };
+            var order = new MarketOnCloseOrder(Symbols.SPY, 10, orderUtcTime, "", orderProperties);
+
+            Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
+
+            localTimeKeeper.UpdateTime(marketCloseUtcTime.AddSeconds(-1));
+            Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
+
+            // the order fills at the close
+            localTimeKeeper.UpdateTime(marketCloseUtcTime);
+            Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
+
+            // the fill model might wait for the closing trade ticks
+            localTimeKeeper.UpdateTime(marketCloseUtcTime.AddMinutes(1));
+            Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
+
+            localTimeKeeper.UpdateTime(endOfDayUtcTime.AddTicks(-1));
+            Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
+
+            localTimeKeeper.UpdateTime(endOfDayUtcTime);
+            Assert.IsTrue(timeInForce.IsOrderExpired(security, order));
+        }
+
         [Test]
         public void DayTimeInForceForexOrderBefore5PMExpiresAt5PM()
         {
@@ -120,6 +176,7 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             var security = new Forex(
                 SecurityExchangeHoursTests.CreateForexSecurityExchangeHours(),
                 new Cash(Currencies.USD, 0, 1m),
+                new Cash("EUR", 0, 0),
                 new SubscriptionDataConfig(
                     typeof(QuoteBar),
                     Symbols.EURUSD,
@@ -170,6 +227,7 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             var security = new Forex(
                 SecurityExchangeHoursTests.CreateForexSecurityExchangeHours(),
                 new Cash(Currencies.USD, 0, 1m),
+                new Cash(Currencies.EUR, 0, 0),
                 new SubscriptionDataConfig(
                     typeof(QuoteBar),
                     Symbols.EURUSD,
@@ -215,14 +273,12 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             Assert.IsTrue(timeInForce.IsFillValid(security, order, fill2));
         }
 
-        [Test]
-        public void DayTimeInForceCryptoOrderExpiresAtMidnightUtc()
+        private static Security[] CryptoSecurities => new Security[]
         {
-            var utcTime = new DateTime(2018, 4, 27, 10, 0, 0);
-
-            var security = new Crypto(
+            new Crypto(
                 SecurityExchangeHours.AlwaysOpen(TimeZones.Utc),
                 new Cash(Currencies.USD, 0, 1m),
+                new Cash("BTC", 0, 0),
                 new SubscriptionDataConfig(
                     typeof(QuoteBar),
                     Symbols.BTCUSD,
@@ -236,13 +292,30 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
                 SymbolProperties.GetDefault(Currencies.USD),
                 ErrorCurrencyConverter.Instance,
                 RegisteredSecurityDataTypesProvider.Null
-            );
+            ),
+            new CryptoFuture(
+                Symbol.Create("BTCUSDT", SecurityType.CryptoFuture, Market.Binance),
+                SecurityExchangeHours.AlwaysOpen(TimeZones.Utc),
+                new Cash("USDT", 0, 1m),
+                new Cash("BTC", 0, 0),
+                SymbolProperties.GetDefault("USDT"),
+                ErrorCurrencyConverter.Instance,
+                RegisteredSecurityDataTypesProvider.Null,
+                new SecurityCache()
+            )
+        };
+
+        [TestCaseSource(nameof(CryptoSecurities))]
+        public void DayTimeInForceCryptoOrderExpiresAtMidnightUtc(Security security)
+        {
+            var utcTime = new DateTime(2018, 4, 27, 10, 0, 0);
+
             var localTimeKeeper = new LocalTimeKeeper(utcTime, TimeZones.Utc);
             security.SetLocalTimeKeeper(localTimeKeeper);
 
             var timeInForce = TimeInForce.Day;
             var orderProperties = new OrderProperties { TimeInForce = timeInForce };
-            var order = new LimitOrder(Symbols.BTCUSD, 10, 100, utcTime, "", orderProperties);
+            var order = new LimitOrder(security.Symbol, 10, 100, utcTime, "", orderProperties);
 
             Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
 
@@ -332,6 +405,7 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             var security = new Forex(
                 SecurityExchangeHoursTests.CreateForexSecurityExchangeHours(),
                 new Cash(Currencies.USD, 0, 1m),
+                new Cash(Currencies.EUR, 0, 0),
                 new SubscriptionDataConfig(
                     typeof(QuoteBar),
                     Symbols.EURUSD,
@@ -385,34 +459,17 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             Assert.IsTrue(timeInForce.IsFillValid(security, order, fill2));
         }
 
-        [Test]
-        public void GtdTimeInForceCryptoOrderExpiresAtMidnightUtcAfterExpiryDate()
+        [TestCaseSource(nameof(CryptoSecurities))]
+        public void GtdTimeInForceCryptoOrderExpiresAtMidnightUtcAfterExpiryDate(Security security)
         {
             var utcTime = new DateTime(2018, 4, 27, 10, 0, 0);
 
-            var security = new Crypto(
-                SecurityExchangeHours.AlwaysOpen(TimeZones.Utc),
-                new Cash(Currencies.USD, 0, 1m),
-                new SubscriptionDataConfig(
-                    typeof(QuoteBar),
-                    Symbols.BTCUSD,
-                    Resolution.Minute,
-                    TimeZones.Utc,
-                    TimeZones.Utc,
-                    true,
-                    true,
-                    true
-                ),
-                SymbolProperties.GetDefault(Currencies.USD),
-                ErrorCurrencyConverter.Instance,
-                RegisteredSecurityDataTypesProvider.Null
-            );
             var localTimeKeeper = new LocalTimeKeeper(utcTime, TimeZones.Utc);
             security.SetLocalTimeKeeper(localTimeKeeper);
 
             var timeInForce = TimeInForce.GoodTilDate(new DateTime(2018, 5, 1));
             var orderProperties = new OrderProperties { TimeInForce = timeInForce };
-            var order = new LimitOrder(Symbols.BTCUSD, 10, 100, utcTime, "", orderProperties);
+            var order = new LimitOrder(security.Symbol, 10, 100, utcTime, "", orderProperties);
 
             Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
 
@@ -502,6 +559,7 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             var security = new Forex(
                 SecurityExchangeHoursTests.CreateForexSecurityExchangeHours(),
                 new Cash(Currencies.USD, 0, 1m),
+                new Cash(Currencies.EUR, 0, 0),
                 new SubscriptionDataConfig(
                     typeof(QuoteBar),
                     Symbols.EURUSD,
@@ -552,6 +610,7 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             var security = new Forex(
                 SecurityExchangeHoursTests.CreateForexSecurityExchangeHours(),
                 new Cash(Currencies.USD, 0, 1m),
+                new Cash(Currencies.EUR, 0, 0),
                 new SubscriptionDataConfig(
                     typeof(QuoteBar),
                     Symbols.EURUSD,
@@ -597,34 +656,17 @@ namespace QuantConnect.Tests.Common.Orders.TimeInForces
             Assert.IsTrue(timeInForce.IsFillValid(security, order, fill2));
         }
 
-        [Test]
-        public void GtdSameDayTimeInForceCryptoOrderExpiresAtMidnightUtc()
+        [TestCaseSource(nameof(CryptoSecurities))]
+        public void GtdSameDayTimeInForceCryptoOrderExpiresAtMidnightUtc(Security security)
         {
             var utcTime = new DateTime(2018, 4, 27, 10, 0, 0);
 
-            var security = new Crypto(
-                SecurityExchangeHours.AlwaysOpen(TimeZones.Utc),
-                new Cash(Currencies.USD, 0, 1m),
-                new SubscriptionDataConfig(
-                    typeof(QuoteBar),
-                    Symbols.BTCUSD,
-                    Resolution.Minute,
-                    TimeZones.Utc,
-                    TimeZones.Utc,
-                    true,
-                    true,
-                    true
-                ),
-                SymbolProperties.GetDefault(Currencies.USD),
-                ErrorCurrencyConverter.Instance,
-                RegisteredSecurityDataTypesProvider.Null
-            );
             var localTimeKeeper = new LocalTimeKeeper(utcTime, TimeZones.Utc);
             security.SetLocalTimeKeeper(localTimeKeeper);
 
             var timeInForce = TimeInForce.GoodTilDate(new DateTime(2018, 4, 27));
             var orderProperties = new OrderProperties { TimeInForce = timeInForce };
-            var order = new LimitOrder(Symbols.BTCUSD, 10, 100, utcTime, "", orderProperties);
+            var order = new LimitOrder(security.Symbol, 10, 100, utcTime, "", orderProperties);
 
             Assert.IsFalse(timeInForce.IsOrderExpired(security, order));
 

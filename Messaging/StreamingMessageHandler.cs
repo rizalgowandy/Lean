@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -37,6 +37,7 @@ namespace QuantConnect.Messaging
         private PushSocket _server;
         private AlgorithmNodePacket _job;
         private OrderEventJsonConverter _orderEventJsonConverter;
+        private readonly object _socketLock = new object();
 
         /// <summary>
         /// Gets or sets whether this messaging handler has any current subscribers.
@@ -47,7 +48,8 @@ namespace QuantConnect.Messaging
         /// <summary>
         /// Initialize the messaging system
         /// </summary>
-        public void Initialize()
+        /// <param name="initializeParameters">The parameters required for initialization</param>
+        public void Initialize(MessagingHandlerInitializeParameters initializeParameters)
         {
             _port = Config.Get("desktop-http-port");
             CheckPort();
@@ -71,10 +73,9 @@ namespace QuantConnect.Messaging
         /// <param name="notification">The notification to be sent.</param>
         public void SendNotification(Notification notification)
         {
-            var type = notification.GetType();
-            if (type == typeof(NotificationEmail) || type == typeof(NotificationWeb) || type == typeof(NotificationSms))
+            if (!notification.CanSend())
             {
-                Log.Error("Messaging.SendNotification(): Send not implemented for notification of type: " + type.Name);
+                Log.Error("Messaging.SendNotification(): Send not implemented for notification of type: " + notification.GetType().Name);
                 return;
             }
             notification.Send();
@@ -100,7 +101,10 @@ namespace QuantConnect.Messaging
 
             message.Append(payload);
 
-            _server.SendMultipartMessage(message);
+            lock (_socketLock)
+            {
+                _server?.SendMultipartMessage(message);
+            }
         }
 
         /// <summary>
@@ -126,6 +130,11 @@ namespace QuantConnect.Messaging
         /// </summary>
         public void Dispose()
         {
+            lock (_socketLock)
+            {
+                _server?.Dispose();
+                _server = null;
+            }
         }
     }
 }

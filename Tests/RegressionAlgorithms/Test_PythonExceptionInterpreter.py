@@ -1,4 +1,4 @@
-﻿# QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
+# QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
 # Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,34 +11,61 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from clr import AddReference
-AddReference("System")
-AddReference("QuantConnect.Algorithm")
-AddReference("QuantConnect.Algorithm.Framework")
-AddReference("QuantConnect.Common")
-from System import *
-from QuantConnect import *
-from QuantConnect.Algorithm import QCAlgorithm
-from QuantConnect.Algorithm.Framework import *
-from QuantConnect.Algorithm.Framework.Alphas import *
-from QuantConnect.Algorithm.Framework.Execution import *
-from QuantConnect.Algorithm.Framework.Portfolio import *
-from QuantConnect.Algorithm.Framework.Risk import *
-from QuantConnect.Algorithm.Framework.Selection import *
-import decimal
+from AlgorithmImports import *
 
 class Test_PythonExceptionInterpreter(QCAlgorithm):
-    def Initialize(self):
+    def initialize(self):
         pass
 
     def key_error(self):
         x = dict()['SPY']
 
+    def key_error_object_key(self):
+        # KeyError whose message is "<QuantConnect.Symbol object at 0x...>": the key must be read from args
+        symbol = Symbol.create('SPY', SecurityType.EQUITY, Market.USA)
+        x = dict()[symbol]
+
+    def attribute_error_quote_bar_volume(self):
+        x = QuoteBar().volume
+
+    def attribute_error_trade_bar_ask_price(self):
+        x = TradeBar().ask_price
+
+    def attribute_error_generic(self):
+        x = QuoteBar().not_an_attribute
+
     def no_method_match(self):
-        self.SetCash('SPY')
+        self.set_cash('SPY')
+
+    def no_method_match_rsi(self):
+        symbol = Symbol.create('SPY', SecurityType.EQUITY, Market.USA)
+        # The third positional argument should be a MovingAverageType, not a Resolution,
+        # so no RSI overload matches the given arguments.
+        self._indicator = self.rsi(symbol, 15, Resolution.DAILY)
 
     def unsupported_operand(self):
         x = None + "Pepe Grillo"
 
+    def unsupported_operand_datetime_date(self):
+        x = datetime(2020, 1, 2) - date(2020, 1, 1)
+
+    def unsupported_operand_date_datetime(self):
+        x = date(2020, 1, 1) - datetime(2020, 1, 2)
+
+    def datetime_date_comparison(self):
+        x = datetime(2020, 1, 2) < date(2020, 1, 1)
+
+    def module_not_found(self):
+        from MissingClrNamespace.Distributions import Normal
+
+    def multiple_inheritance(self):
+        class MultipleInheritanceMixin:
+            pass
+        class MultipleInheritanceAlgorithm(QCAlgorithm, MultipleInheritanceMixin):
+            pass
+
     def zero_division_error(self):
         x = 1 / 0
+
+    def dotnet_error(self):
+        self.market_order(None, 1);

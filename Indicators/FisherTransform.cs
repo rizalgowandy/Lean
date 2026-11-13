@@ -69,7 +69,7 @@ namespace QuantConnect.Indicators
         /// <summary>
         /// Gets a flag indicating when this indicator is ready and fully initialized
         /// </summary>
-        public override bool IsReady => _medianMax.IsReady && _medianMax.IsReady;
+        public override bool IsReady => _medianMax.IsReady && _medianMin.IsReady;
 
         /// <summary>
         /// Required period, in data points, for the indicator to be ready and fully initialized.
@@ -78,8 +78,8 @@ namespace QuantConnect.Indicators
 
         /// <summary>
         /// Computes the next value in the transform.
-        /// value1 is a function used to normalize price withing the last _period day range.
-        /// value1 is centered on its midpoint and then doubled so that value1 wil swing between -1 and +1.
+        /// value1 is a function used to normalize price within the last _period day range.
+        /// value1 is centered on its midpoint and then doubled so that value1 will swing between -1 and +1.
         /// value1 is also smoothed with an exponential moving average whose alpha is 0.33.
         ///
         /// Since the smoothing may allow value1 to exceed the _period day price range, limits are introduced to
@@ -89,8 +89,8 @@ namespace QuantConnect.Indicators
         protected override decimal ComputeNextValue(IBaseDataBar input)
         {
             var price = (input.Low + input.High) / 2m;
-            _medianMin.Update(input.Time, price);
-            _medianMax.Update(input.Time, price);
+            _medianMin.Update(input.EndTime, price);
+            _medianMax.Update(input.EndTime, price);
 
             if (!IsReady) return 0;
 

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -47,7 +47,7 @@ namespace QuantConnect.Optimizer.Launcher
             Directory.CreateDirectory(_rootResultDirectory);
 
             _leanLocation = Configuration.Config.Get("lean-binaries-location",
-                Path.Combine(Directory.GetCurrentDirectory(), "../../../Launcher/bin/Debug/QuantConnect.Lean.Launcher.exe"));
+                Path.Combine(Directory.GetCurrentDirectory(), "../../../Launcher/bin/Debug/QuantConnect.Lean.Launcher.dll"));
 
             var closeLeanAutomatically = Configuration.Config.GetBool("optimizer-close-automatically", true);
             _extraLeanArguments = $"--close-automatically {closeLeanAutomatically}";
@@ -75,27 +75,21 @@ namespace QuantConnect.Optimizer.Launcher
         /// Handles starting Lean for a given parameter set
         /// </summary>
         /// <param name="parameterSet">The parameter set for the backtest to run</param>
+        /// <param name="backtestName">The backtest name to use</param>
         /// <returns>The new unique backtest id</returns>
-        protected override string RunLean(ParameterSet parameterSet)
+        protected override string RunLean(ParameterSet parameterSet, string backtestName)
         {
             var backtestId = Guid.NewGuid().ToString();
-
+            var optimizationId = NodePacket.OptimizationId;
             // start each lean instance in its own directory so they store their logs & results, else they fight for the log.txt file
             var resultDirectory = Path.Combine(_rootResultDirectory, backtestId);
             Directory.CreateDirectory(resultDirectory);
 
-            // Use ProcessStartInfo class
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = _leanLocation,
-                WorkingDirectory = Directory.GetParent(_leanLocation).FullName,
-                Arguments = $"--results-destination-folder \"{resultDirectory}\" --algorithm-id \"{backtestId}\" --parameters {parameterSet} {_extraLeanArguments}",
-                WindowStyle = ProcessWindowStyle.Minimized
-            };
+            var arguments = $"--results-destination-folder \"{resultDirectory}\" --algorithm-id \"{backtestId}\" --optimization-id \"{optimizationId}\" --parameters {parameterSet} --backtest-name \"{backtestName}\" {_extraLeanArguments}";
 
             var process = new Process
             {
-                StartInfo = startInfo,
+                StartInfo = CreateLeanStartInfo(_leanLocation, arguments),
                 EnableRaisingEvents = true
             };
             _processByBacktestId[backtestId] = process;
@@ -118,6 +112,32 @@ namespace QuantConnect.Optimizer.Launcher
             process.Start();
 
             return backtestId;
+        }
+
+        /// <summary>
+        /// Creates the start info to launch Lean from the given location
+        /// </summary>
+        /// <param name="leanLocation">The Lean launcher assembly (.dll) or executable to run</param>
+        /// <param name="arguments">The Lean command line arguments</param>
+        /// <returns>The start info for the Lean process</returns>
+        internal static ProcessStartInfo CreateLeanStartInfo(string leanLocation, string arguments)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = leanLocation,
+                WorkingDirectory = Directory.GetParent(leanLocation).FullName,
+                Arguments = arguments,
+                WindowStyle = ProcessWindowStyle.Minimized
+            };
+
+            // Run assemblies through the dotnet host: the native apphost only runs on the architecture it was built for
+            if (leanLocation.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            {
+                startInfo.FileName = "dotnet";
+                startInfo.Arguments = $"\"{leanLocation}\" {arguments}";
+            }
+
+            return startInfo;
         }
 
         /// <summary>

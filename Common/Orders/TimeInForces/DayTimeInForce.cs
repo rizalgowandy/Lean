@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -33,7 +33,9 @@ namespace QuantConnect.Orders.TimeInForces
         {
             var exchangeHours = security.Exchange.Hours;
 
-            var orderTime = order.Time.ConvertFromUtc(exchangeHours.TimeZone);
+            // for contingent child orders the clock starts ticking once they are triggered, when their parent fills
+            var workingTime = order.GetWorkingTime();
+            var orderTime = workingTime.ConvertFromUtc(exchangeHours.TimeZone);
             var time = security.LocalTime;
 
             bool expired;
@@ -48,7 +50,7 @@ namespace QuantConnect.Orders.TimeInForces
                     var cutOffTimeZone = TimeZones.NewYork;
                     var cutOffTimeSpan = TimeSpan.FromHours(17);
 
-                    orderTime = order.Time.ConvertFromUtc(cutOffTimeZone);
+                    orderTime = workingTime.ConvertFromUtc(cutOffTimeZone);
                     var expiryTime = orderTime.Date.Add(cutOffTimeSpan);
                     if (orderTime.TimeOfDay > cutOffTimeSpan)
                     {
@@ -60,6 +62,7 @@ namespace QuantConnect.Orders.TimeInForces
                     break;
 
                 case SecurityType.Crypto:
+                case SecurityType.CryptoFuture:
                     // expires at midnight UTC
                     expired = time.Date > orderTime.Date;
                     break;
@@ -70,8 +73,10 @@ namespace QuantConnect.Orders.TimeInForces
                 case SecurityType.FutureOption:
                 case SecurityType.IndexOption:
                 default:
-                    // expires at market close
-                    expired = time >= exchangeHours.GetNextMarketClose(orderTime, false);
+                    var marketClose = exchangeHours.GetLastDailyMarketClose(orderTime, false);
+                    // expires at market close. Market on close orders execute at the close and fill models might wait
+                    // for the closing trade ticks after it, so they expire at the end of that day
+                    expired = order.Type == OrderType.MarketOnClose ? time.Date > marketClose.Date : time >= marketClose;
                     break;
             }
 

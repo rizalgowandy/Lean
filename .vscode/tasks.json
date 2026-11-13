@@ -1,20 +1,25 @@
 {
     /*
         VS Code Tasks for the LEAN engine
-        In order to use the build tasks you need msbuild on your system path.
+        In order to use the build tasks you need dotnet on your system path.
     */
     "version": "2.0.0",
     "tasks": [
         {
             "label": "build",
             "type": "shell",
-            "command": "msbuild",
+            "command": "dotnet",
             "args": [
+                "build",
+                "${workspaceFolder}/QuantConnect.Lean.sln",
                 "/p:Configuration=Debug",
                 "/p:DebugType=portable",
-                "/t:build",
+                "/p:WarningLevel=1"
             ],
-            "group": "build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
             "presentation": {
                 "reveal": "silent"
             },
@@ -23,11 +28,14 @@
         {
             "label": "rebuild",
             "type": "shell",
-            "command": "msbuild",
+            "command": "dotnet",
             "args": [
+                "build",
+                "${workspaceFolder}/QuantConnect.Lean.sln",
+                "--no-incremental",
                 "/p:Configuration=Debug",
                 "/p:DebugType=portable",
-                "/t:rebuild",
+                "/p:WarningLevel=1"
             ],
             "group": "build",
             "presentation": {
@@ -38,9 +46,10 @@
         {
             "label": "clean",
             "type": "shell",
-            "command": "msbuild",
+            "command": "dotnet",
             "args": [
-                "/t:clean",
+                "clean",
+                "${workspaceFolder}/QuantConnect.Lean.sln"
             ],
             "group": "build",
             "presentation": {
@@ -49,91 +58,34 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "force build linux",
+            "label": "test",
             "type": "shell",
-            "command": "msbuild",
+            "command": "dotnet",
             "args": [
-                "/property:GenerateFullPaths=true",
-                "/p:Configuration=Debug",
-                "/p:DebugType=portable",
-                "/t:build",
-                "/p:ForceLinuxBuild=true"
+                "test",
+                "${workspaceFolder}/Tests/QuantConnect.Tests.csproj",
+                "--no-build"
             ],
-            "group": "build",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
             "presentation": {
-                "reveal": "silent"
+                "reveal": "always"
             },
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "run-docker",
+            "label": "start research",
             "type": "shell",
+            "dependsOn": ["build"],
+            "group": "build",
             "isBackground": true,
-            "windows": {
-                "command": "${workspaceFolder}/run_docker.bat",
-            },
-            "linux": {
-                "command": "${workspaceFolder}/run_docker.sh"
-            },
-            "osx": {
-                "command": "${workspaceFolder}/run_docker.sh"
-            },
+            "command": "${workspaceFolder}/.vscode/launch_research.sh",
             "args": [
-                "IMAGE=quantconnect/lean:latest",
-                "CONFIG_FILE=${workspaceFolder}/Launcher/config.json",
-                "DATA_DIR=${workspaceFolder}/Data",
-                "RESULTS_DIR=${workspaceFolder}/Results",
-                "DEBUGGING=Y",
-                "PYTHON_DIR=${workspaceFolder}/Algorithm.Python",
-                "EXIT=Y"
+                "${workspaceFolder}/Launcher/bin/Debug"
             ],
-            "problemMatcher": [
-                {
-                  "pattern": [
-                    {
-                      "regexp": ".",
-                      "file": 1,
-                      "location": 2,
-                      "message": 3
-                    }
-                  ],
-                  "background": {
-                    "activeOnStart": true,
-                    "beginsPattern": ".",
-                    "endsPattern": ".",
-                  }
-                }
-              ]
-        },
-        {
-            "label": "close-docker",
-            "type": "shell",
-            "command": "docker stop LeanEngine",
-            "presentation": {
-                "echo": false,
-                "reveal": "never",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": false,
-                "clear": true,
-            },
-            "linux":{
-                "command": "sudo docker stop LeanEngine"
-            }
-        },
-        {
-            "label": "Run Application",
-            "type": "process",
-            "command": "QuantConnect.Lean.Launcher.exe",
-            "args" : [
-                "--data-folder",
-                "${workspaceFolder}/Data",
-                "--config",
-                "${workspaceFolder}/Launcher/config.json"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}/Launcher/bin/Debug/"
-            }
+            "problemMatcher": "$msCompile"
         }
     ]
 }

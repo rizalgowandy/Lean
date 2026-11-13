@@ -24,7 +24,7 @@ namespace QuantConnect.Indicators
     /// The Least Squares Moving Average (LSMA) first calculates a least squares regression line
     /// over the preceding time periods, and then projects it forward to the current period. In
     /// essence, it calculates what the value would be if the regression line continued.
-    /// Source: https://rtmath.net/helpFinAnalysis/html/b3fab79c-f4b2-40fb-8709-fdba43cdb363.htm
+    /// Source: https://rtmath.net/assets/docs/finanalysis/html/b3fab79c-f4b2-40fb-8709-fdba43cdb363.htm
     /// </summary>
     public class LeastSquaresMovingAverage : WindowIndicator<IndicatorDataPoint>, IIndicatorWarmUpPeriodProvider
     {
@@ -37,7 +37,7 @@ namespace QuantConnect.Indicators
         /// The point where the regression line crosses the y-axis (price-axis)
         /// </summary>
         public IndicatorBase<IndicatorDataPoint> Intercept { get; }
-        
+
         /// <summary>
         /// The regression line slope
         /// </summary>
@@ -52,10 +52,15 @@ namespace QuantConnect.Indicators
         /// Initializes a new instance of the <see cref="LeastSquaresMovingAverage"/> class.
         /// </summary>
         /// <param name="name">The name of this indicator</param>
-        /// <param name="period">The number of data points to hold in the window</param>
+        /// <param name="period">The number of data points to hold in the window, must be greater than one</param>
         public LeastSquaresMovingAverage(string name, int period)
             : base(name, period)
         {
+            if (period < 2)
+            {
+                throw new ArgumentException($"Period parameter for LeastSquaresMovingAverage indicator must be greater than 1 but was {period}.");
+            }
+
             _t = Vector<double>.Build.Dense(period, i => i + 1).ToArray();
             Intercept = new Identity(name + "_Intercept");
             Slope = new Identity(name + "_Slope");
@@ -64,7 +69,7 @@ namespace QuantConnect.Indicators
         /// <summary>
         /// Initializes a new instance of the <see cref="LeastSquaresMovingAverage"/> class.
         /// </summary>
-        /// <param name="period">The number of data points to hold in the window.</param>
+        /// <param name="period">The number of data points to hold in the window, must be greater than one.</param>
         public LeastSquaresMovingAverage(int period)
             : this($"LSMA({period})", period)
         {
@@ -81,17 +86,17 @@ namespace QuantConnect.Indicators
         protected override decimal ComputeNextValue(IReadOnlyWindow<IndicatorDataPoint> window, IndicatorDataPoint input)
         {
             // Until the window is ready, the indicator returns the input value.
-            if (window.Samples <= window.Size) return input.Value;
+            if (!window.IsReady) return input.Value;
 
             // Sort the window by time, convert the observations to double and transform it to an array
             var series = window
-                .OrderBy(i => i.Time)
+                .OrderBy(i => i.EndTime)
                 .Select(i => Convert.ToDouble(i.Value))
                 .ToArray();
             // Fit OLS
             var ols = Fit.Line(x: _t, y: series);
-            Intercept.Update(input.Time, (decimal)ols.Item1);
-            Slope.Update(input.Time, (decimal)ols.Item2);
+            Intercept.Update(input.EndTime, (decimal)ols.Item1);
+            Slope.Update(input.EndTime, (decimal)ols.Item2);
 
             // Calculate the fitted value corresponding to the input
             return Intercept.Current.Value + Slope.Current.Value * Period;

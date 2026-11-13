@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -17,12 +17,15 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using QuantConnect.Interfaces;
+using QuantConnect.Logging;
+using QuantConnect.Util;
 
 namespace QuantConnect.Lean.Engine.DataFeeds.Transport
 {
     /// <summary>
-    /// Represents a stream reader capabable of downloading a remote file and then
+    /// Represents a stream reader capable of downloading a remote file and then
     /// reading it from disk
     /// </summary>
     public class RemoteFileSubscriptionStreamReader : IStreamReader
@@ -33,6 +36,11 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Transport
         private static readonly object _fileSystemLock = new object();
 
         /// <summary>
+        /// The unit of the wait between download attempts, settable so the unit tests don't wait on the retries
+        /// </summary>
+        internal static TimeSpan RetryDelayUnit { get; set; } = TimeSpan.FromSeconds(1);
+
+        /// <summary>
         /// Gets whether or not this stream reader should be rate limited
         /// </summary>
         public bool ShouldBeRateLimited => false;
@@ -41,6 +49,11 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Transport
         /// Direct access to the StreamReader instance
         /// </summary>
         public StreamReader StreamReader => _streamReader.StreamReader;
+
+        /// <summary>
+        /// The local file name of the downloaded file
+        /// </summary>
+        public string LocalFileName { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RemoteFileSubscriptionStreamReader"/> class.
@@ -56,35 +69,64 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Transport
             var useCache = !dataCacheProvider.IsDataEphemeral;
 
             // create a hash for a new filename
-            var filename = (useCache ? source.ToMD5() : Guid.NewGuid().ToString())  + source.GetExtension();
-            var destination = Path.Combine(downloadDirectory, filename);
+            string baseFileName = string.Empty;
+            string extension = string.Empty;
+            string entryName = string.Empty;
+            try
+            {
+                var uri = new Uri(source);
+                baseFileName = uri.OriginalString;
+                if (!string.IsNullOrEmpty(uri.Fragment))
+                {
+                    baseFileName = baseFileName.Replace(uri.Fragment, "", StringComparison.InvariantCulture);
+                }
+                extension = uri.AbsolutePath.GetExtension();
+                entryName = uri.Fragment;
+            }
+            catch
+            {
+                LeanData.ParseKey(source, out baseFileName, out entryName);
+                extension = Path.GetExtension(baseFileName);
+            }
 
-            string contents = null;
+            var cacheFileName = (useCache ? baseFileName.ToMD5() : Guid.NewGuid().ToString()) + extension;
+            LocalFileName = Path.Combine(downloadDirectory, cacheFileName);
+
+            byte[] bytes = null;
             if (useCache)
             {
                 lock (_fileSystemLock)
                 {
-                    if (!File.Exists(destination))
+                    if (!File.Exists(LocalFileName))
                     {
-                        contents = _downloader.Download(source, headers, null, null);
-                        File.WriteAllText(destination, contents);
+                        bytes = DownloadBytesWithRetry(source, headers);
                     }
                 }
             }
             else
             {
-                contents = _downloader.Download(source, headers, null, null);
-                File.WriteAllText(destination, contents);
+                bytes = DownloadBytesWithRetry(source, headers);
             }
 
-            if (contents != null)
+            // Only persist a non-empty download. The remote source can intermittently answer with an empty body
+            // (e.g. a transient HTTP 200 with no content); writing/caching that empty response would make the
+            // whole subscription silently yield no data, and with caching enabled the empty file would be reused.
+            if (bytes != null && bytes.Length > 0)
             {
+                File.WriteAllBytes(LocalFileName, bytes);
+
                 // Send the file to the dataCacheProvider so it is available when the streamReader asks for it
-                dataCacheProvider.Store(destination, System.Text.Encoding.UTF8.GetBytes(contents));
+                dataCacheProvider.Store(LocalFileName, bytes);
             }
 
-            // now we can just use the local file reader
-            _streamReader = new LocalFileSubscriptionStreamReader(dataCacheProvider, destination);
+            // now we can just use the local file reader.
+            // add the entry name to the local file name so the correct entry is read
+            var fileNameWithEntry = LocalFileName;
+            if (!string.IsNullOrEmpty(entryName))
+            {
+                fileNameWithEntry += entryName;
+            }
+            _streamReader = new LocalFileSubscriptionStreamReader(dataCacheProvider, fileNameWithEntry);
         }
 
         /// <summary>
@@ -126,6 +168,47 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Transport
         public static void SetDownloadProvider(IDownloadProvider downloader)
         {
             _downloader = downloader;
+        }
+
+        /// <summary>
+        /// Downloads the given source, retrying a few times on a transient failure. The remote endpoint can
+        /// intermittently throw or answer with an empty body; a bounded retry lets a single hiccup recover
+        /// instead of failing the whole subscription with no data.
+        /// </summary>
+        private static byte[] DownloadBytesWithRetry(string source, IEnumerable<KeyValuePair<string, string>> headers)
+        {
+            const int maxAttempts = 3;
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    var bytes = _downloader.DownloadBytes(source, headers, null, null);
+                    if (bytes != null && bytes.Length > 0)
+                    {
+                        return bytes;
+                    }
+
+                    // a successful but empty response is transient for these sources; retry before giving up
+                    Log.Trace($"RemoteFileSubscriptionStreamReader.DownloadBytesWithRetry(): empty response for {source} " +
+                        $"(attempt {attempt}/{maxAttempts})");
+                }
+                catch (Exception exception)
+                {
+                    if (attempt == maxAttempts)
+                    {
+                        throw;
+                    }
+                    Log.Trace($"RemoteFileSubscriptionStreamReader.DownloadBytesWithRetry(): failed to download {source} " +
+                        $"(attempt {attempt}/{maxAttempts}): {exception.Message}");
+                }
+
+                if (attempt < maxAttempts)
+                {
+                    Thread.Sleep(RetryDelayUnit * (2 + attempt));
+                }
+            }
+
+            return null;
         }
     }
 }

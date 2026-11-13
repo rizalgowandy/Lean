@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -119,6 +119,101 @@ namespace QuantConnect.Tests.Optimizer.Strategies
                 Assert.AreEqual(Math.Floor(Math.Abs(max - min) / Math.Abs(step)) + 1, _strategy.GetTotalBacktestEstimate());
             }
 
+            private static TestCaseData[] OffGridStepParameters => new[]
+            {
+                new TestCaseData(0.10000000000000001m, 0.29999999999999999m, 0.050000000000000003m),
+                new TestCaseData(109m, 111.57142857142857142857142857m, 1.2857142857142857142857142857m),
+                new TestCaseData(162.66666666666666666666666667m, 171.80952380952380952380952381m, 9.142857142857142857142857143m),
+                new TestCaseData(9.333333333333333333333333333m, 110.04761904761904761904761904m, 6.7142857142857142857142857143m)
+            };
+
+            [Test, TestCaseSource(nameof(OffGridStepParameters))]
+            public void EstimateMatchesEnumeratedParameterSets(decimal min, decimal max, decimal step)
+            {
+                var set = new HashSet<OptimizationParameter>
+                {
+                    new OptimizationStepParameter("ema-fast", min, max, step),
+                    new OptimizationStepParameter("ema-slow", 0.1m, 0.3m, 0.05m)
+                };
+                _strategy.Initialize(new Target("Profit", new Maximization(), null), new List<Constraint>(), set, new StepBaseOptimizationStrategySettings());
+                var enumerated = 0;
+                _strategy.NewParameterSet += (s, parameterSet) => enumerated++;
+
+                _strategy.PushNewResults(OptimizationResult.Initial);
+
+                Assert.Greater(enumerated, 0);
+                Assert.AreEqual(enumerated, _strategy.GetTotalBacktestEstimate());
+            }
+
+            private static TestCaseData[] BoundaryStepParameters => new[]
+            {
+                // the step is below the min value's precision, so 'min + index * step' rounds back to min for half a billion indices
+                new TestCaseData(1000000000m, 1000000000m, 0.0000000000000000000000000001m, 500000001),
+                // the count doesn't fit in an int
+                new TestCaseData(0m, 2147483647m, 1m, int.MaxValue),
+                // the division rounds up to the next grid point
+                new TestCaseData(0m, 59999999999999999999999999999m, 60000000000000000000000000000m, 1),
+                // the grid enumerates within the decimal range, but the search probes an index whose value overflows it
+                new TestCaseData(0m, 50000000000000000000000000000m, 10000000000000000000000000000m, 6)
+            };
+
+            [Test, TestCaseSource(nameof(BoundaryStepParameters))]
+            public void EstimateAtNumericBoundaries(decimal min, decimal max, decimal step, int expected)
+            {
+                var set = new HashSet<OptimizationParameter> { new OptimizationStepParameter("ema-fast", min, max, step) };
+                _strategy.Initialize(new Target("Profit", new Maximization(), null), new List<Constraint>(), set, new StepBaseOptimizationStrategySettings());
+
+                Assert.AreEqual(expected, _strategy.GetTotalBacktestEstimate());
+            }
+
+            // the step calculated as '(max - min) / segments' would be zero for equal bounds or a range below the decimal precision
+            [TestCase(1, 1, 1)]
+            [TestCase(0, 0.0000000000000000000000000001, 2)]
+            public void EstimateCountsCalculatedStepOfSingleValueOrNarrowRange(decimal min, decimal max, int expected)
+            {
+                var set = new HashSet<OptimizationParameter> { new OptimizationStepParameter("ema-fast", min, max) };
+                _strategy.Initialize(new Target("Profit", new Maximization(), null), new List<Constraint>(), set, new StepBaseOptimizationStrategySettings { DefaultSegmentAmount = 10 });
+
+                Assert.AreEqual(expected, _strategy.GetTotalBacktestEstimate());
+            }
+
+            [Test]
+            public void EstimateRejectsZeroStep()
+            {
+                var parameter = new OptimizationStepParameter("ema-fast", 1, 2, 1);
+                _strategy.Initialize(new Target("Profit", new Maximization(), null), new List<Constraint>(), new HashSet<OptimizationParameter> { parameter }, new StepBaseOptimizationStrategySettings());
+                parameter.Step = 0;
+
+                Assert.Throws<InvalidOperationException>(() => _strategy.GetTotalBacktestEstimate());
+            }
+
+            private static TestCaseData[] LargeGridParameters => new[]
+            {
+                // 46340 * 46340 values fit in an int
+                new TestCaseData(new decimal[] { 46339, 46339 }, 2147395600),
+                // 46341 * 46341 values don't fit in an int
+                new TestCaseData(new decimal[] { 46340, 46340 }, int.MaxValue),
+                // the total stays capped once it reached the int range
+                new TestCaseData(new decimal[] { 46340, 46340, 46340 }, int.MaxValue),
+                // int.MaxValue * 2 values don't fit in an int
+                new TestCaseData(new decimal[] { 2147483646, 1 }, int.MaxValue),
+                // int.MaxValue * 1 values fit in an int
+                new TestCaseData(new decimal[] { 2147483646, 0 }, int.MaxValue)
+            };
+
+            [Test, TestCaseSource(nameof(LargeGridParameters))]
+            public void EstimateIsCappedForLargeGrids(decimal[] maxValues, int expected)
+            {
+                var set = new HashSet<OptimizationParameter> { new StaticOptimizationParameter("pepe", "SPY") };
+                for (var i = 0; i < maxValues.Length; i++)
+                {
+                    set.Add(new OptimizationStepParameter($"param-{i}", 0, maxValues[i], 1));
+                }
+                _strategy.Initialize(new Target("Profit", new Maximization(), null), new List<Constraint>(), set, new StepBaseOptimizationStrategySettings());
+
+                Assert.AreEqual(expected, _strategy.GetTotalBacktestEstimate());
+            }
+
             private static TestCaseData[] OptimizationStepParameter2D => new[]{
                 new TestCaseData(new decimal[,] {{10, 100, 1}, {20, 200, 1}}),
                 new TestCaseData(new decimal[,] {{10.5m, 100.5m, 1.5m}, { 20m, 209.9m, 3.5m}})
@@ -215,7 +310,7 @@ namespace QuantConnect.Tests.Optimizer.Strategies
                 {
                     new OptimizationStepParameter("ema-fast", 10, 100, 1),
                     new OptimizationStepParameter("ema-slow", 20, 200, 4),
-                    new OptimizationStepParameter("ema-custom", 30, 300, 2),
+                    new OptimizationStepParameter("ema-custom", 30, 300, 30),
                     new StaticOptimizationParameter("pepe", "SPY")
                 };
                 _strategy.Initialize(new Target("Profit", new Maximization(), null), null, args, new StepBaseOptimizationStrategySettings());
@@ -260,7 +355,7 @@ namespace QuantConnect.Tests.Optimizer.Strategies
                                             Assert.IsNotNull(parameterSet);
                                             Assert.IsTrue(parameterSet.Value.All(s =>
                                                 args.Any(arg => arg.Name == s.Key)));
-                                            Assert.AreEqual(4, parameterSet.Value.Count());
+                                            Assert.AreEqual(4, parameterSet.Value.Count);
                                             Assert.AreEqual(fast, parameterSet.Value["ema-fast"]);
                                             Assert.AreEqual(slow, parameterSet.Value["ema-slow"]);
                                             Assert.AreEqual(custom, parameterSet.Value["ema-custom"]);

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -25,18 +25,18 @@ namespace QuantConnect.Data
     /// <summary>
     /// Count number of subscribers for each channel (Symbol, Socket) pair
     /// </summary>
-    public abstract class DataQueueHandlerSubscriptionManager
+    public abstract class DataQueueHandlerSubscriptionManager : IDisposable
     {
         /// <summary>
         /// Counter
         /// </summary>
-        protected ConcurrentDictionary<Channel, int> SubscribersByChannel = new ConcurrentDictionary<Channel, int>();
+        protected ConcurrentDictionary<Channel, int> SubscribersByChannel { get; init; } = new ConcurrentDictionary<Channel, int>();
 
         /// <summary>
         /// Increment number of subscribers for current <see cref="TickType"/>
         /// </summary>
         /// <param name="dataConfig">defines the subscription configuration data.</param>        
-        public void Subscribe(SubscriptionDataConfig dataConfig)
+        public virtual void Subscribe(SubscriptionDataConfig dataConfig)
         {
             try
             {
@@ -103,6 +103,21 @@ namespace QuantConnect.Data
         }
 
         /// <summary>
+        /// Retrieves the list of unique <see cref="Symbol"/> instances that are currently subscribed for a specific <see cref="TickType"/>.
+        /// </summary>
+        /// <param name="tickType">The type of tick data to filter subscriptions by.</param>
+        /// <returns>A collection of unique <see cref="Symbol"/> objects that match the specified <paramref name="tickType"/>.</returns>
+        public IEnumerable<Symbol> GetSubscribedSymbols(TickType tickType)
+        {
+            var channelName = ChannelNameFromTickType(tickType);
+#pragma warning disable CA1309
+            return SubscribersByChannel.Keys.Where(x => x.Name.Equals(channelName, StringComparison.InvariantCultureIgnoreCase))
+#pragma warning restore CA1309
+                .Select(c => c.Symbol)
+                .Distinct();
+        }
+
+        /// <summary>
         /// Checks if there is existing subscriber for current channel
         /// </summary>
         /// <param name="symbol">Symbol</param>
@@ -116,11 +131,18 @@ namespace QuantConnect.Data
         }
 
         /// <summary>
+        /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
+        /// </summary>
+        public virtual void Dispose()
+        {
+        }
+
+        /// <summary>
         /// Describes the way <see cref="IDataQueueHandler"/> implements subscription
         /// </summary>
         /// <param name="symbols">Symbols to subscribe</param>
         /// <param name="tickType">Type of tick data</param>
-        /// <returns>Returns true if subsribed; otherwise false</returns>
+        /// <returns>Returns true if subscribed; otherwise false</returns>
         protected abstract bool Subscribe(IEnumerable<Symbol> symbols, TickType tickType);
 
         /// <summary>

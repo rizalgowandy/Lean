@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -14,9 +14,10 @@
  *
 */
 
+using QuantConnect.Orders;
+using QuantConnect.Statistics;
 using System;
 using System.Collections.Generic;
-using QuantConnect.Orders;
 
 namespace QuantConnect.Packets
 {
@@ -25,11 +26,6 @@ namespace QuantConnect.Packets
     /// </summary>
     public class BaseResultParameters
     {
-        /// <summary>
-        /// Contains population averages scores over the life of the algorithm
-        /// </summary>
-        public AlphaRuntimeStatistics AlphaRuntimeStatistics { get; set; }
-
         /// <summary>
         /// Trade profit and loss information since the last algorithm result packet
         /// </summary>
@@ -59,5 +55,58 @@ namespace QuantConnect.Packets
         /// Runtime banner/updating statistics in the title banner of the live algorithm GUI.
         /// </summary>
         public IDictionary<string, string> RuntimeStatistics { get; set; }
+
+        /// <summary>
+        /// State information of the algorithm.
+        /// </summary>
+        public IDictionary<string, string> State { get; set; }
+
+        /// <summary>
+        /// Server status information, including CPU/RAM usage, etc...
+        /// </summary>
+        public IDictionary<string, string> ServerStatistics { get; set; }
+
+        /// <summary>
+        /// The algorithm's configuration required for report generation
+        /// </summary>
+        public AlgorithmConfiguration AlgorithmConfiguration { get; set; }
+
+        /// <summary>
+        /// Rolling window detailed statistics.
+        /// </summary>
+        public AlgorithmPerformance TotalPerformance { get; set; }
+
+        /// <summary>
+        /// Backtest analysis results.
+        /// </summary>
+        public IReadOnlyList<Analysis> Analysis { get; set; }
+
+        /// <summary>
+        /// Creates a new instance
+        /// </summary>
+        public BaseResultParameters(IDictionary<string, Chart> charts,
+            IDictionary<int, Order> orders,
+            IDictionary<DateTime, decimal> profitLoss,
+            IDictionary<string, string> statistics,
+            IDictionary<string, string> runtimeStatistics,
+            List<OrderEvent> orderEvents,
+            AlgorithmPerformance totalPerformance = null,
+            AlgorithmConfiguration algorithmConfiguration = null,
+            IDictionary<string, string> state = null,
+            IReadOnlyList<Analysis> analysisResult = null,
+            IDictionary<string, string> serverStatistics = null)
+        {
+            Charts = charts;
+            Orders = orders;
+            ProfitLoss = profitLoss;
+            Statistics = statistics;
+            RuntimeStatistics = runtimeStatistics;
+            OrderEvents = orderEvents;
+            AlgorithmConfiguration = algorithmConfiguration;
+            State = state;
+            TotalPerformance = totalPerformance;
+            Analysis = analysisResult;
+            ServerStatistics = serverStatistics;
+        }
     }
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -33,15 +33,16 @@ namespace QuantConnect.Data.Consolidators
         /// Creates a consolidator to produce a new 'TradeBar' representing the period
         /// </summary>
         /// <param name="period">The minimum span of time before emitting a consolidated bar</param>
-        protected TradeBarConsolidatorBase(TimeSpan period)
-            : base(period)
+        /// <param name="startTime">Optionally the bar start time anchor to use</param>
+        protected TradeBarConsolidatorBase(TimeSpan period, TimeSpan? startTime = null)
+            : base(period, startTime)
         {
         }
 
         /// <summary>
         /// Creates a consolidator to produce a new 'TradeBar' representing the last count pieces of data
         /// </summary>
-        /// <param name="maxCount">The number of pieces to accept before emiting a consolidated bar</param>
+        /// <param name="maxCount">The number of pieces to accept before emitting a consolidated bar</param>
         protected TradeBarConsolidatorBase(int maxCount)
             : base(maxCount)
         {
@@ -50,7 +51,7 @@ namespace QuantConnect.Data.Consolidators
         /// <summary>
         /// Creates a consolidator to produce a new 'TradeBar' representing the last count pieces of data or the period, whichever comes first
         /// </summary>
-        /// <param name="maxCount">The number of pieces to accept before emiting a consolidated bar</param>
+        /// <param name="maxCount">The number of pieces to accept before emitting a consolidated bar</param>
         /// <param name="period">The minimum span of time before emitting a consolidated bar</param>
         protected TradeBarConsolidatorBase(int maxCount, TimeSpan period)
             : base(maxCount, period)

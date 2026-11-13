@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -21,10 +21,8 @@ using QuantConnect.Securities;
 namespace QuantConnect.Orders.Fills
 {
     /// <summary>
-    /// This fill model is provided because currently the data sourced for Crypto
-    /// is limited to one minute snapshots for Quote data. This fill model will
-    /// ignore the trade/quote distinction and return the latest pricing information
-    /// in order to determine the correct fill price
+    /// This fill model is provided for cases where the trade/quote distinction should be
+    /// ignored and the fill price should be determined from the latest pricing information.
     /// </summary>
     public class LatestPriceFillModel : ImmediateFillModel
     {
@@ -41,11 +39,13 @@ namespace QuantConnect.Orders.Fills
             var open = asset.Open;
             var close = asset.Close;
             var current = asset.Price;
-            var endTime = asset.Cache.GetData()?.EndTime ?? DateTime.MinValue;
+            var lastData = asset.Cache.GetData();
+            var startTime = lastData?.Time ?? DateTime.MinValue;
+            var endTime = lastData?.EndTime ?? DateTime.MinValue;
 
             if (direction == OrderDirection.Hold)
             {
-                return new Prices(endTime, current, open, high, low, close);
+                return new Prices(startTime, endTime, current, open, high, low, close);
             }
 
             // Only fill with data types we are subscribed to
@@ -60,14 +60,14 @@ namespace QuantConnect.Orders.Fills
                 var price = direction == OrderDirection.Sell ? tick.BidPrice : tick.AskPrice;
                 if (price != 0m)
                 {
-                    return new Prices(endTime, price, 0, 0, 0, 0);
+                    return new Prices(tick.Time, tick.EndTime, price, 0, 0, 0, 0);
                 }
 
                 // If the ask/bid spreads are not available for ticks, try the price
                 price = tick.Price;
                 if (price != 0m)
                 {
-                    return new Prices(endTime, price, 0, 0, 0, 0);
+                    return new Prices(tick.Time, tick.EndTime, price, 0, 0, 0, 0);
                 }
             }
 
@@ -90,12 +90,12 @@ namespace QuantConnect.Orders.Fills
                     var bar = direction == OrderDirection.Sell ? quoteBar.Bid : quoteBar.Ask;
                     if (bar != null)
                     {
-                        return new Prices(quoteBar.EndTime, bar);
+                        return new Prices(quoteBar.Time, quoteBar.EndTime, bar);
                     }
                 }
             }
 
-            return new Prices(endTime, current, open, high, low, close);
+            return new Prices(startTime, endTime, current, open, high, low, close);
         }
     }
 }

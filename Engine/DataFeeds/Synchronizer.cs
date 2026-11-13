@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -32,24 +32,29 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         private DateTimeZone _dateTimeZone;
 
         /// <summary>
+        /// UTC time at which the warm up period ends
+        /// </summary>
+        protected DateTime WarmupEndUtc { get; set; }
+
+        /// <summary>
         /// The algorithm instance
         /// </summary>
-        protected IAlgorithm Algorithm;
+        protected IAlgorithm Algorithm { get; set; }
 
         /// <summary>
         /// The subscription manager
         /// </summary>
-        protected IDataFeedSubscriptionManager SubscriptionManager;
+        protected IDataFeedSubscriptionManager SubscriptionManager { get; set; }
 
         /// <summary>
         /// The subscription synchronizer
         /// </summary>
-        protected SubscriptionSynchronizer SubscriptionSynchronizer;
+        protected SubscriptionSynchronizer SubscriptionSynchronizer { get; set; }
 
         /// <summary>
         /// The time slice factory
         /// </summary>
-        protected TimeSliceFactory TimeSliceFactory;
+        protected TimeSliceFactory TimeSliceFactory { get; set; }
 
         /// <summary>
         /// Continuous UTC time provider, only valid for live trading see <see cref="LiveSynchronizer"/>
@@ -66,12 +71,13 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         /// </summary>
         public virtual void Initialize(
             IAlgorithm algorithm,
-            IDataFeedSubscriptionManager dataFeedSubscriptionManager)
+            IDataFeedSubscriptionManager dataFeedSubscriptionManager,
+            PerformanceTrackingTool performanceTrackingTool)
         {
             SubscriptionManager = dataFeedSubscriptionManager;
             Algorithm = algorithm;
             SubscriptionSynchronizer = new SubscriptionSynchronizer(
-                SubscriptionManager.UniverseSelection);
+                SubscriptionManager.UniverseSelection, performanceTrackingTool);
         }
 
         /// <summary>
@@ -107,10 +113,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 }
                 catch (Exception err)
                 {
-                    Log.Error(err);
                     // notify the algorithm about the error, so it can be reported to the user
-                    Algorithm.RunTimeError = err;
-                    Algorithm.Status = AlgorithmStatus.RuntimeError;
+                    Algorithm.SetRuntimeError(err, "Synchronizer");
                     break;
                 }
 
@@ -122,6 +126,11 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     previousWasTimePulse = timeSlice.IsTimePulse;
                     // skip time pulse when algorithms already at that time
                     continue;
+                }
+
+                if (ShouldEmitWarmupEndPulse(timeSlice))
+                {
+                    yield return TimeSliceFactory.CreateTimePulse(WarmupEndUtc);
                 }
 
                 // SubscriptionFrontierTimeProvider will return twice the same time if there are no more subscriptions or if Subscription.Current is null
@@ -152,6 +161,15 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         }
 
         /// <summary>
+        /// Returns true when the first post warmup slice skips past StartDate
+        /// so a time pulse can be emitted to align algorithm time before OnWarmupFinished fires
+        /// </summary>
+        protected bool ShouldEmitWarmupEndPulse(TimeSlice timeSlice)
+        {
+            return Algorithm.GetLocked() && Algorithm.IsWarmingUp && timeSlice.Time > WarmupEndUtc;
+        }
+
+        /// <summary>
         /// Performs additional initialization steps after algorithm initialization
         /// </summary>
         protected virtual void PostInitialize()
@@ -168,6 +186,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
 
             // this is set after the algorithm initializes
             _dateTimeZone = Algorithm.TimeZone;
+            WarmupEndUtc = Algorithm.StartDate.ConvertToUtc(_dateTimeZone);
             TimeSliceFactory = new TimeSliceFactory(_dateTimeZone);
             SubscriptionSynchronizer.SetTimeSliceFactory(TimeSliceFactory);
         }
@@ -208,7 +227,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
 
             if (frontier == DateTime.MaxValue)
             {
-                frontier = Algorithm.StartDate.ConvertToUtc(_dateTimeZone);
+                // here we use Time and not StartDate because Time will be before the start during warmup period.
+                frontier = Algorithm.Time.ConvertToUtc(_dateTimeZone);
             }
             return frontier;
         }

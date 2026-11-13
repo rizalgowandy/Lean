@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  * 
@@ -13,13 +13,15 @@
  * limitations under the License.
 */
 
+using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 using QuantConnect.Data.Market;
 using QuantConnect.Indicators;
 
 namespace QuantConnect.Tests.Indicators
 {
-    [TestFixture]
+    [TestFixture, Parallelizable(ParallelScope.Fixtures)]
     public class MidPriceTests : CommonIndicatorTests<IBaseDataBar>
     {
         protected override IndicatorBase<IBaseDataBar> CreateIndicator()
@@ -35,6 +37,36 @@ namespace QuantConnect.Tests.Indicators
         protected override string TestColumnName
         {
             get { return "MIDPRICE_5"; }
+        }
+
+        [Test]
+        public void ProducesTheSameValuesAfterReset()
+        {
+            var midPrice = new MidPrice(3);
+            var reference = new DateTime(2024, 1, 1);
+            var bars = new[]
+            {
+                new TradeBar { High = 110m, Low = 100m },
+                new TradeBar { High = 111m, Low = 101m },
+                new TradeBar { High = 112m, Low = 102m },
+                new TradeBar { High = 105m, Low = 95m }
+            };
+
+            var expected = new List<decimal>();
+            for (var i = 0; i < bars.Length; i++)
+            {
+                bars[i].Time = reference.AddDays(i);
+                midPrice.Update(bars[i]);
+                expected.Add(midPrice.Current.Value);
+            }
+
+            midPrice.Reset();
+
+            for (var i = 0; i < bars.Length; i++)
+            {
+                midPrice.Update(bars[i]);
+                Assert.AreEqual(expected[i], midPrice.Current.Value);
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -17,12 +17,15 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Serialization;
 using NUnit.Framework;
 using QuantConnect.Algorithm.CSharp;
 using QuantConnect.Configuration;
 using QuantConnect.Interfaces;
 using QuantConnect.Logging;
 using QuantConnect.Packets;
+using QuantConnect.Statistics;
 
 namespace QuantConnect.Tests.Common.Packets
 {
@@ -47,31 +50,30 @@ namespace QuantConnect.Tests.Common.Packets
         {
             var parameter = new RegressionTests.AlgorithmStatisticsTestParameters(nameof(BasicTemplateDailyAlgorithm),
                 new Dictionary<string, string> {
-                    { "Total Trades", "1" },
+                    { PerformanceMetrics.TotalOrders, "1" },
                     {"Average Win", "0%"},
                     { "Average Loss", "0%"},
-                    { "Compounding Annual Return", "17.457%"},
-                    { "Drawdown", "30.300%"},
+                    { "Compounding Annual Return", "14.421%"},
+                    { "Drawdown", "32.900%"},
                     { "Expectancy", "0"},
-                    { "Net Profit", "37.900%"},
-                    { "Sharpe Ratio", "0.682"},
+                    { "Net Profit", "30.857%"},
+                    { "Sharpe Ratio", "0.492"},
                     { "Loss Rate", "0%"},
                     { "Win Rate", "0%"},
                     { "Profit-Loss Ratio", "0"},
-                    { "Alpha", "0.205"},
-                    { "Beta", "-0.122"},
-                    { "Annual Standard Deviation", "0.269"},
-                    { "Annual Variance", "0.073"},
-                    { "Information Ratio", "0.016"},
-                    { "Tracking Error", "0.415"},
-                    { "Treynor Ratio", "-1.5"},
-                    { "Total Fees", "$7.00"} },
+                    { "Alpha", "-0.012"},
+                    { "Beta", "1.012"},
+                    { "Annual Standard Deviation", "0.263"},
+                    { "Annual Variance", "0.069"},
+                    { "Information Ratio", "-0.42"},
+                    { "Tracking Error", "0.025"},
+                    { "Treynor Ratio", "0.128"},
+                    { "Total Fees", "$7.10"} },
                 Language.CSharp,
                 AlgorithmStatus.Completed);
 
             AlgorithmRunner.RunLocalBacktest(parameter.Algorithm,
                 parameter.Statistics,
-                parameter.AlphaStatistics,
                 parameter.Language,
                 parameter.ExpectedFinalStatus,
                 startDate: new DateTime(2008, 10, 10),
@@ -83,35 +85,105 @@ namespace QuantConnect.Tests.Common.Packets
         {
             var parameter = new RegressionTests.AlgorithmStatisticsTestParameters(nameof(CoarseFundamentalTop3Algorithm),
                 new Dictionary<string, string> {
-                    { "Total Trades", "3" },
+                    { PerformanceMetrics.TotalOrders, "5" },
                     {"Average Win", "0%"},
                     { "Average Loss", "0%"},
-                    { "Compounding Annual Return", "-41.768%"},
-                    { "Drawdown", "0.300%"},
+                    { "Compounding Annual Return", "-88.910%"},
+                    { "Drawdown", "1.800%"},
                     { "Expectancy", "0"},
-                    { "Net Profit", "-0.296%"},
-                    { "Sharpe Ratio", "-9.376"},
+                    { "Net Profit", "-1.791%"},
+                    { "Sharpe Ratio", "-4.495"},
                     { "Loss Rate", "0%"},
                     { "Win Rate", "0%"},
                     { "Profit-Loss Ratio", "0"},
-                    { "Alpha", "-0.827"},
-                    { "Beta", "0.603"},
-                    { "Annual Standard Deviation", "0.033"},
-                    { "Annual Variance", "0.001"},
-                    { "Information Ratio", "-53.28"},
-                    { "Tracking Error", "0.022"},
-                    { "Treynor Ratio", "-0.517"},
+                    { "Alpha", "-0.522"},
+                    { "Beta", "1.48"},
+                    { "Annual Standard Deviation", "0.201"},
+                    { "Annual Variance", "0.04"},
+                    { "Information Ratio", "-9.904"},
+                    { "Tracking Error", "0.065"},
+                    { "Treynor Ratio", "-0.611"},
                     { "Total Fees", "$3.00"} },
                 Language.CSharp,
                 AlgorithmStatus.Completed);
 
             AlgorithmRunner.RunLocalBacktest(parameter.Algorithm,
                 parameter.Statistics,
-                parameter.AlphaStatistics,
                 parameter.Language,
                 parameter.ExpectedFinalStatus,
                 startDate: new DateTime(2014, 03, 24),
-                endDate: new DateTime(2014, 03, 25));
+                endDate: new DateTime(2014, 03, 26));
+        }
+
+        [TestCase("{\"ema-fast\":\"10\",\"ema-slow\":\"20\"}")]
+        [TestCase("[{\"key\":\"ema-fast\",\"value\":\"10\"},{\"key\":\"ema-slow\",\"value\":\"20\",\"min\":10,\"max\":30,\"step\":5}]")]
+        [TestCase("[{\"name\":\"ema-fast\",\"value\":\"10\"},{\"name\":\"ema-slow\",\"value\":20}]")]
+        public void ParametersDeserialization(string parameters)
+        {
+            var job = JsonConvert.DeserializeObject<BacktestNodePacket>($"{{\"Parameters\":{parameters}}}");
+
+            Assert.AreEqual(2, job.Parameters.Count);
+            Assert.AreEqual("10", job.Parameters["ema-fast"]);
+            Assert.AreEqual("20", job.Parameters["ema-slow"]);
+        }
+
+        [TestCase("{\"start-date\":\"2024-01-01\",\"end-date\":\"2024-01-01T10:00:00Z\",\"leverage\":1.10,\"enabled\":true}")]
+        [TestCase("[{\"key\":\"start-date\",\"value\":\"2024-01-01\"},{\"key\":\"end-date\",\"value\":\"2024-01-01T10:00:00Z\"}," +
+            "{\"key\":\"leverage\",\"value\":1.10},{\"key\":\"enabled\",\"value\":true}]")]
+        public void ParametersKeepTheirRawValue(string parameters)
+        {
+            var job = JsonConvert.DeserializeObject<BacktestNodePacket>($"{{\"Parameters\":{parameters}}}");
+
+            Assert.AreEqual("2024-01-01", job.Parameters["start-date"]);
+            Assert.AreEqual("2024-01-01T10:00:00Z", job.Parameters["end-date"]);
+            Assert.AreEqual("1.10", job.Parameters["leverage"]);
+            Assert.AreEqual("true", job.Parameters["enabled"]);
+        }
+
+        [TestCase("2024-01-01T10:00:00Z")]
+        [TestCase("2024-01-01T10:00:00")]
+        [TestCase("2024-01-01T10:00:00.5Z")]
+        public void ParametersKeepTheirDateWhenReadFromAParsedTree(string date)
+        {
+            // parsed with the default settings, the tree holds the date strings as dates
+            var packet = JObject.Parse($"{{\"Parameters\":{{\"start-date\":\"{date}\",\"ema-fast\":\"10\",\"leverage\":1.5}}}}");
+
+            var job = packet.ToObject<BacktestNodePacket>();
+
+            Assert.AreEqual(date, job.Parameters["start-date"]);
+            Assert.AreEqual("10", job.Parameters["ema-fast"]);
+            Assert.AreEqual("1.5", job.Parameters["leverage"]);
+        }
+
+        [TestCase("{\"ema-fast\":\"10\",\"start-date\":\"2024-01-01T10:00:00Z\"}")]
+        [TestCase("[{\"key\":\"ema-fast\",\"value\":\"10\"},{\"key\":\"start-date\",\"value\":\"2024-01-01T10:00:00Z\"}]")]
+        public void ParametersDeserializationCamelCase(string parameters)
+        {
+            var settings = new JsonSerializerSettings
+            {
+                ContractResolver = new DefaultContractResolver
+                {
+                    NamingStrategy = new CamelCaseNamingStrategy { ProcessDictionaryKeys = false, OverrideSpecifiedNames = true }
+                }
+            };
+
+            var job = JsonConvert.DeserializeObject<BacktestNodePacket>($"{{\"parameters\":{parameters}}}", settings);
+
+            Assert.AreEqual(2, job.Parameters.Count);
+            Assert.AreEqual("10", job.Parameters["ema-fast"]);
+            Assert.AreEqual("2024-01-01T10:00:00Z", job.Parameters["start-date"]);
+        }
+
+        [Test]
+        public void ParametersRoundTrip()
+        {
+            var job = new BacktestNodePacket { Parameters = new Dictionary<string, string> { { "ema-fast", "10" } } };
+
+            var serialized = JsonConvert.SerializeObject(job);
+            var job2 = JsonConvert.DeserializeObject<BacktestNodePacket>(serialized);
+
+            StringAssert.Contains("\"Parameters\":{\"ema-fast\":\"10\"}", serialized);
+            Assert.AreEqual(job.Parameters, job2.Parameters);
         }
 
         [Test, Parallelizable(ParallelScope.Self)]
@@ -175,32 +247,32 @@ namespace QuantConnect.Tests.Common.Packets
         {
             var parameter = new RegressionTests.AlgorithmStatisticsTestParameters(nameof(BasicTemplateDailyAlgorithm),
                 new Dictionary<string, string> {
-                    {"Total Trades", "1"},
+                    {PerformanceMetrics.TotalOrders, "1"},
                     {"Average Win", "0%"},
                     {"Average Loss", "0%"},
-                    {"Compounding Annual Return", "246.546%"},
-                    {"Drawdown", "1.200%"},
+                    {"Compounding Annual Return", "424.497%"},
+                    {"Drawdown", "0.800%"},
                     {"Expectancy", "0"},
-                    {"Net Profit", "3.464%"},
-                    {"Sharpe Ratio", "9.933"},
+                    {"Net Profit", "4.487%"},
+                    {"Sharpe Ratio", "17.306"},
+                    {"Probabilistic Sharpe Ratio", "96.710%"},
                     {"Loss Rate", "0%"},
                     {"Win Rate", "0%"},
                     {"Profit-Loss Ratio", "0"},
-                    {"Alpha", "1.957"},
-                    {"Beta", "-0.125"},
-                    {"Annual Standard Deviation", "0.164"},
-                    {"Annual Variance", "0.027"},
-                    {"Information Ratio", "-4.577"},
-                    {"Tracking Error", "0.225"},
-                    {"Treynor Ratio", "-13.006"},
-                    {"Total Fees", "$34.45"} // 10x times more than original BasicTemplateDailyAlgorithm
+                    {"Alpha", "-0.249"},
+                    {"Beta", "1.015"},
+                    {"Annual Standard Deviation", "0.141"},
+                    {"Annual Variance", "0.02"},
+                    {"Information Ratio", "-18.937"},
+                    {"Tracking Error", "0.011"},
+                    {"Treynor Ratio", "2.403"},
+                    {"Total Fees", "$34.86"} // 10x times more than original BasicTemplateDailyAlgorithm
                 },
                 Language.CSharp,
                 AlgorithmStatus.Completed);
 
             AlgorithmRunner.RunLocalBacktest(parameter.Algorithm,
                 parameter.Statistics,
-                parameter.AlphaStatistics,
                 parameter.Language,
                 parameter.ExpectedFinalStatus,
                 initialCash: 1000000); // 1M vs 100K that is set in BasicTemplateDailyAlgorithm (10x)
@@ -211,32 +283,32 @@ namespace QuantConnect.Tests.Common.Packets
         {
             var parameter = new RegressionTests.AlgorithmStatisticsTestParameters(nameof(TestInitialCashAmountAlgorithm),
                 new Dictionary<string, string> {
-                    {"Total Trades", "1"},
+                    {PerformanceMetrics.TotalOrders, "1"},
                     {"Average Win", "0%"},
                     {"Average Loss", "0%"},
-                    {"Compounding Annual Return", "214.949%"},
-                    {"Drawdown", "1.200%"},
+                    {"Compounding Annual Return", "338.765%"},
+                    {"Drawdown", "0.800%"},
                     {"Expectancy", "0"},
-                    {"Net Profit", "3.464%"},
-                    {"Sharpe Ratio", "8.903"},
+                    {"Net Profit", "4.487%"},
+                    {"Sharpe Ratio", "15.085"},
+                    {"Probabilistic Sharpe Ratio", "96.987%"},
                     {"Loss Rate", "0%"},
                     {"Win Rate", "0%"},
                     {"Profit-Loss Ratio", "0"},
-                    {"Alpha", "1.588"},
-                    {"Beta", "-0.092"},
-                    {"Annual Standard Deviation", "0.155"},
-                    {"Annual Variance", "0.024"},
-                    {"Information Ratio", "-3.899"},
-                    {"Tracking Error", "0.212"},
-                    {"Treynor Ratio", "-15.033"},
-                    {"Total Fees", "$34.45"} // 10x times more than original BasicTemplateDailyAlgorithm
+                    {"Alpha", "-0.194"},
+                    {"Beta", "1.013"},
+                    {"Annual Standard Deviation", "0.135"},
+                    {"Annual Variance", "0.018"},
+                    {"Information Ratio", "-15.836"},
+                    {"Tracking Error", "0.01"},
+                    {"Treynor Ratio", "2.013"},
+                    {"Total Fees", "$34.86"} // 10x times more than original BasicTemplateDailyAlgorithm
                 },
                 Language.CSharp,
                 AlgorithmStatus.Completed);
 
             AlgorithmRunner.RunLocalBacktest(parameter.Algorithm,
                 parameter.Statistics,
-                parameter.AlphaStatistics,
                 parameter.Language,
                 parameter.ExpectedFinalStatus,
                 initialCash: 1000000, // 1M vs 100K that is set in BasicTemplateDailyAlgorithm (10x)

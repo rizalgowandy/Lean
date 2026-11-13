@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -14,10 +14,10 @@
  *
 */
 
-using System;
-using System.Collections.Generic;
 using QuantConnect.Orders;
 using QuantConnect.Statistics;
+using System;
+using System.Collections.Generic;
 
 namespace QuantConnect.Packets
 {
@@ -32,11 +32,6 @@ namespace QuantConnect.Packets
         public Dictionary<string, AlgorithmPerformance> RollingWindow { get; set; }
 
         /// <summary>
-        /// Rolling window detailed statistics.
-        /// </summary>
-        public AlgorithmPerformance TotalPerformance { get; set; }
-
-        /// <summary>
         /// Creates a new instance
         /// </summary>
         public BacktestResultParameters(IDictionary<string, Chart> charts,
@@ -47,17 +42,14 @@ namespace QuantConnect.Packets
             Dictionary<string, AlgorithmPerformance> rollingWindow,
             List<OrderEvent> orderEvents,
             AlgorithmPerformance totalPerformance = null,
-            AlphaRuntimeStatistics alphaRuntimeStatistics = null)
+            AlgorithmConfiguration algorithmConfiguration = null,
+            IDictionary<string, string> state = null,
+            IReadOnlyList<Analysis> analysisResult = null,
+            IDictionary<string, string> serverStatistics = null)
+            : base(charts, orders, profitLoss, statistics, runtimeStatistics, orderEvents, totalPerformance, algorithmConfiguration, state, analysisResult,
+                serverStatistics)
         {
-            Charts = charts;
-            Orders = orders;
-            ProfitLoss = profitLoss;
-            Statistics = statistics;
-            RuntimeStatistics = runtimeStatistics;
             RollingWindow = rollingWindow;
-            OrderEvents = orderEvents;
-            TotalPerformance = totalPerformance;
-            AlphaRuntimeStatistics = alphaRuntimeStatistics;
         }
     }
 }

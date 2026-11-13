@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -13,6 +13,7 @@
  * limitations under the License.
 */
 
+using QuantConnect.Orders;
 using System.Linq;
 
 namespace QuantConnect.Securities.Option.StrategyMatcher
@@ -21,6 +22,12 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
     /// Provides an implementation of <see cref="IOptionStrategyMatchObjectiveFunction"/> that evaluates the number of unmatched
     /// positions, in number of contracts, giving precedence to solutions that have fewer unmatched contracts.
     /// </summary>
+    /// <remarks>
+    /// Unlike the rest of the implementations, these scores are not bounded above by zero: a mostly long book scores
+    /// positive even with contracts left unmatched. Since <see cref="OptionStrategyMatcher"/> stops evaluating further
+    /// candidate solutions as soon as one scores zero or better, configuring this function effectively preserves the
+    /// single greedy matching pass performed before candidate solutions were compared.
+    /// </remarks>
     public class UnmatchedPositionCountOptionStrategyMatchObjectiveFunction : IOptionStrategyMatchObjectiveFunction
     {
         /// <summary>
@@ -31,7 +38,7 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
             var value = 0m;
             foreach (var strategy in match.Strategies)
             {
-                foreach (var leg in strategy.OptionLegs.Concat<OptionStrategy.LegData>(strategy.UnderlyingLegs))
+                foreach (var leg in strategy.OptionLegs.Concat<Leg>(strategy.UnderlyingLegs))
                 {
                     value += leg.Quantity;
                 }

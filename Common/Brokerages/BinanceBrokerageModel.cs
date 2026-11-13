@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -13,12 +13,13 @@
  * limitations under the License.
 */
 
-using QuantConnect.Orders.Fees;
-using QuantConnect.Securities;
+using System.Linq;
 using QuantConnect.Util;
-using System;
-using System.Collections.Generic;
+using QuantConnect.Orders;
 using QuantConnect.Benchmarks;
+using QuantConnect.Securities;
+using QuantConnect.Orders.Fees;
+using System.Collections.Generic;
 
 namespace QuantConnect.Brokerages
 {
@@ -28,9 +29,31 @@ namespace QuantConnect.Brokerages
     public class BinanceBrokerageModel : DefaultBrokerageModel
     {
         /// <summary>
+        /// The contingency types supported by the brokerage: OCO, OTO and OTOCO order lists
+        /// </summary>
+        private readonly HashSet<ContingencyType> _supportedContingencyTypes = new()
+        {
+            ContingencyType.OneCancelsOther,
+            ContingencyType.OneTriggersOther
+        };
+
+        private const decimal _defaultLeverage = 3;
+        private const decimal _defaultFutureLeverage = 25;
+
+        /// <summary>
+        /// The base Binance API endpoint URL.
+        /// </summary>
+        protected virtual string BaseApiEndpoint => "https://api.binance.com/api/v3";
+
+        /// <summary>
+        /// Market name
+        /// </summary>
+        protected virtual string MarketName => Market.Binance;
+
+        /// <summary>
         /// Gets a map of the default markets to be used for each security type
         /// </summary>
-        public override IReadOnlyDictionary<SecurityType, string> DefaultMarkets { get; } = GetDefaultMarkets();
+        public override IReadOnlyDictionary<SecurityType, string> DefaultMarkets { get; } = GetDefaultMarkets(Market.Binance);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="BinanceBrokerageModel"/> class
@@ -38,22 +61,6 @@ namespace QuantConnect.Brokerages
         /// <param name="accountType">The type of account to be modeled, defaults to <see cref="AccountType.Cash"/></param>
         public BinanceBrokerageModel(AccountType accountType = AccountType.Cash) : base(accountType)
         {
-            if (accountType == AccountType.Margin)
-            {
-                throw new ArgumentException("The Binance brokerage does not currently support Margin trading.");
-            }
-        }
-
-        /// <summary>
-        /// Gets a new buying power model for the security, returning the default model with the security's configured leverage.
-        /// For cash accounts, leverage = 1 is used.
-        /// Margin trading is not currently supported
-        /// </summary>
-        /// <param name="security">The security to get a buying power model for</param>
-        /// <returns>The buying power model for this brokerage/security</returns>
-        public override IBuyingPowerModel GetBuyingPowerModel(Security security)
-        {
-            return new CashBuyingPowerModel();
         }
 
         /// <summary>
@@ -63,8 +70,12 @@ namespace QuantConnect.Brokerages
         /// <returns></returns>
         public override decimal GetLeverage(Security security)
         {
-            // margin trading is not currently supported by Binance
-            return 1m;
+            if (AccountType == AccountType.Cash || security.IsInternalFeed() || security.Type == SecurityType.Base)
+            {
+                return 1m;
+            }
+
+            return security.Symbol.SecurityType == SecurityType.CryptoFuture ? _defaultFutureLeverage : _defaultLeverage;
         }
 
         /// <summary>
@@ -74,7 +85,7 @@ namespace QuantConnect.Brokerages
         /// <returns>The benchmark for this brokerage</returns>
         public override IBenchmark GetBenchmark(SecurityManager securities)
         {
-            var symbol = Symbol.Create("BTCUSD", SecurityType.Crypto, Market.Binance);
+            var symbol = Symbol.Create("BTCUSDC", SecurityType.Crypto, MarketName);
             return SecurityBenchmark.CreateInstance(securities, symbol);
         }
 
@@ -88,10 +99,171 @@ namespace QuantConnect.Brokerages
             return new BinanceFeeModel();
         }
 
-        private static IReadOnlyDictionary<SecurityType, string> GetDefaultMarkets()
+        /// <summary>
+        /// Binance does not support update of orders
+        /// </summary>
+        /// <param name="security">The security of the order</param>
+        /// <param name="order">The order to be updated</param>
+        /// <param name="request">The requested update to be made to the order</param>
+        /// <param name="message">If this function returns false, a brokerage message detailing why the order may not be updated</param>
+        /// <returns>Binance does not support update of orders, so it will always return false</returns>
+        public override bool CanUpdateOrder(Security security, Order order, UpdateOrderRequest request, out BrokerageMessageEvent message)
+        {
+            message = new BrokerageMessageEvent(BrokerageMessageType.Warning, 0, Messages.DefaultBrokerageModel.OrderUpdateNotSupported);
+            return false;
+        }
+
+        /// <summary>
+        /// Validates contingent orders, Binance spot supports these order lists, always for a single symbol:
+        ///  - OCO: a limit order and a stop limit order, for the same side, where one cancels the other
+        ///  - OTO: a working limit order which triggers a single pending order once completely filled
+        ///  - OTOCO: a working limit order which triggers a pending OCO
+        /// </summary>
+        private bool CanSubmitContingentOrder(Security security, Order order, out BrokerageMessageEvent message)
+        {
+            if (!this.ValidateContingentOrder(order, _supportedContingencyTypes, out message, supportsComboOrders: false,
+                supportsMultipleSymbols: false, supportsNesting: false, maximumOrderCount: 3))
+            {
+                return false;
+            }
+
+            var contingency = order.Contingency;
+            if (contingency == null)
+            {
+                return true;
+            }
+
+            var isParent = order.GetContingencyLink(ContingencyRole.Parent) != null;
+            var isChild = order.GetContingencyLink(ContingencyRole.Child) != null;
+            var isMember = order.GetSiblingLink() != null;
+            if (security.Type != SecurityType.Crypto)
+            {
+                message = this.UnsupportedContingentOrdersShape("only spot crypto is supported.");
+            }
+            else if (isParent && (isMember || order.Type != OrderType.Limit))
+            {
+                message = this.UnsupportedContingentOrdersShape("the working order which triggers others has to be a single limit order.");
+            }
+            else if (isMember && order.Type != OrderType.Limit && order.Type != OrderType.StopLimit)
+            {
+                message = this.UnsupportedContingentOrdersShape("one cancels other requires a limit order and a stop limit order.");
+            }
+            else if (contingency.Count == 3 && !isParent && !(isChild && isMember))
+            {
+                message = this.UnsupportedContingentOrdersShape("3 orders are only supported as a working limit order which triggers two orders where one cancels the other.");
+            }
+            else if (isMember && contingency.Directions.Count > 1 && !isChild)
+            {
+                message = this.UnsupportedContingentOrdersShape("one cancels other orders have to be for the same side.");
+            }
+            return message == null;
+        }
+
+        /// <summary>
+        /// Returns true if the brokerage could accept this order. This takes into account
+        /// order type, security type, and order size limits.
+        /// </summary>
+        /// <remarks>
+        /// For example, a brokerage may have no connectivity at certain times, or an order rate/size limit
+        /// </remarks>
+        /// <param name="security">The security of the order</param>
+        /// <param name="order">The order to be processed</param>
+        /// <param name="message">If this function returns false, a brokerage message detailing why the order may not be submitted</param>
+        /// <returns>True if the brokerage could process the order, false otherwise</returns>
+        public override bool CanSubmitOrder(Security security, Order order, out BrokerageMessageEvent message)
+        {
+            message = null;
+
+            // Binance API provides minimum order size in quote currency
+            // and hence we have to check current order size using available price and order quantity
+            var quantityIsValid = true;
+            decimal price;
+            switch (order)
+            {
+                case LimitOrder limitOrder:
+                    quantityIsValid &= IsOrderSizeLargeEnough(limitOrder.LimitPrice);
+                    price = limitOrder.LimitPrice;
+                    break;
+                case MarketOrder:
+                    if (!security.HasData)
+                    {
+                        message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                            Messages.DefaultBrokerageModel.NoDataForSymbol);
+
+                        return false;
+                    }
+
+                    price = order.Direction == OrderDirection.Buy ? security.AskPrice : security.BidPrice;
+                    quantityIsValid &= IsOrderSizeLargeEnough(price);
+                    break;
+                case StopLimitOrder stopLimitOrder:
+                    price = stopLimitOrder.LimitPrice;
+                    quantityIsValid &= IsOrderSizeLargeEnough(stopLimitOrder.LimitPrice);
+                    if (!quantityIsValid)
+                    {
+                        break;
+                    }
+
+                    // Binance Trading UI requires this check too...
+                    quantityIsValid &= IsOrderSizeLargeEnough(stopLimitOrder.StopPrice);
+                    price = stopLimitOrder.StopPrice;
+                    break;
+                case StopMarketOrder stopMarketOrder:
+                    if (security.Symbol.SecurityType != SecurityType.CryptoFuture)
+                    {
+                        // despite Binance API allows you to post STOP_LOSS and TAKE_PROFIT order types
+                        // they always fails with the content
+                        // {"code":-1013,"msg":"Take profit orders are not supported for this symbol."}
+                        // currently no symbols supporting TAKE_PROFIT or STOP_LOSS orders
+
+                        message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                            Messages.BinanceBrokerageModel.UnsupportedOrderTypeWithLinkToSupportedTypes(BaseApiEndpoint, order, security));
+                        return false;
+                    }
+                    quantityIsValid &= IsOrderSizeLargeEnough(stopMarketOrder.StopPrice);
+                    price = stopMarketOrder.StopPrice;
+                    break;
+                default:
+                    message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                        Messages.DefaultBrokerageModel.UnsupportedOrderType(this, order, new[] { OrderType.StopMarket, OrderType.StopLimit, OrderType.Market, OrderType.Limit }));
+                    return false;
+            }
+
+
+            if (!quantityIsValid)
+            {
+                message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                    Messages.DefaultBrokerageModel.InvalidOrderSize(security, order.Quantity, price));
+
+                return false;
+            }
+
+            if (security.Type != SecurityType.Crypto && security.Type != SecurityType.CryptoFuture)
+            {
+                message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                    Messages.DefaultBrokerageModel.UnsupportedSecurityType(this, security));
+
+                return false;
+            }
+
+            if (!CanSubmitContingentOrder(security, order, out message))
+            {
+                return false;
+            }
+            return base.CanSubmitOrder(security, order, out message);
+
+            bool IsOrderSizeLargeEnough(decimal price) =>
+                // if we have a minimum order size we enforce it
+                !security.SymbolProperties.MinimumOrderSize.HasValue || order.AbsoluteQuantity * price > security.SymbolProperties.MinimumOrderSize;
+        }
+
+        /// <summary>
+        /// Returns a readonly dictionary of binance default markets
+        /// </summary>
+        protected static IReadOnlyDictionary<SecurityType, string> GetDefaultMarkets(string marketName)
         {
             var map = DefaultMarketMap.ToDictionary();
-            map[SecurityType.Crypto] = Market.Binance;
+            map[SecurityType.Crypto] = marketName;
             return map.ToReadOnlyDictionary();
         }
     }

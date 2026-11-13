@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -16,14 +16,51 @@
 using Python.Runtime;
 using QuantConnect.Data;
 using QuantConnect.Data.Consolidators;
+using QuantConnect.Indicators;
+using System;
 
 namespace QuantConnect.Python
 {
     /// <summary>
     /// Provides a base class for python consolidators, necessary to use event handler.
+    /// Inherits the built-in rolling window so custom Python consolidators can access their
+    /// consolidated history through the indexer, Current, Previous and Window members.
     /// </summary>
-    public class PythonConsolidator
+    public class PythonConsolidator : WindowBase<IBaseData>, IDataConsolidator
     {
+        /// <summary>
+        /// Gets the most recently consolidated piece of data. This will be null if this consolidator
+        /// has not produced any data yet.
+        /// </summary>
+        public IBaseData Consolidated
+        {
+            get; set;
+        }
+
+        /// <summary>
+        /// Gets a clone of the data being currently consolidated
+        /// </summary>
+        public IBaseData WorkingData
+        {
+            get; set;
+        }
+
+        /// <summary>
+        /// Gets the type consumed by this consolidator
+        /// </summary>
+        public Type InputType
+        {
+            get; set;
+        }
+
+        /// <summary>
+        /// Gets the type produced by this consolidator
+        /// </summary>
+        public Type OutputType
+        {
+            get; set;
+        }
+
         /// <summary>
         /// Event handler that fires when a new piece of data is produced
         /// </summary>
@@ -36,7 +73,42 @@ namespace QuantConnect.Python
         /// <param name="data">The finished data from the consolidator</param>
         public void OnDataConsolidated(PyObject consolidator, IBaseData data)
         {
+            // populate the rolling window before firing so a handler sees the new bar at index 0
+            if (data != null)
+            {
+                Current = data;
+            }
             DataConsolidated?.Invoke(consolidator, data);
+        }
+
+        /// <summary>
+        /// Resets the consolidator
+        /// </summary>
+        public virtual void Reset()
+        {
+            Consolidated = null;
+            WorkingData = null;
+            ResetWindow();
+        }
+
+        /// <summary>
+        /// Scans this consolidator to see if it should emit a bar due to time passing
+        /// </summary>
+        /// <param name="currentLocalTime">The current time in the local time zone (same as <see cref="BaseData.Time"/>)</param>
+        public virtual void Scan(DateTime currentLocalTime)
+        {
+        }
+
+        /// <summary>
+        /// Updates this consolidator with the specified data
+        /// </summary>
+        /// <param name="data">The new data for the consolidator</param>
+        public virtual void Update(IBaseData data)
+        {
+        }
+
+        public void Dispose()
+        {
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -135,7 +135,7 @@ namespace QuantConnect.Configuration
         /// <summary>
         /// Get the matching config setting from the file searching for this key.
         /// </summary>
-        /// <param name="key">String key value we're seaching for in the config file.</param>
+        /// <param name="key">String key value we're searching for in the config file.</param>
         /// <param name="defaultValue"></param>
         /// <returns>String value of the configuration setting or empty string if nothing found.</returns>
         public static string Get(string key, string defaultValue = "")
@@ -146,7 +146,10 @@ namespace QuantConnect.Configuration
             var token = GetToken(Settings.Value, key);
             if (token == null)
             {
-                Log.Trace(Invariant($"Config.Get(): Configuration key not found. Key: {key} - Using default value: {defaultValue}"));
+                if (Log.DebuggingEnabled)
+                {
+                    Log.Debug(Invariant($"Config.Get(): Configuration key not found. Key: {key} - Using default value: {defaultValue}"));
+                }
                 return defaultValue;
             }
             return token.ToString();
@@ -169,7 +172,7 @@ namespace QuantConnect.Configuration
         public static void Set(string key, dynamic value)
         {
             JToken environment = Settings.Value;
-            while (key.Contains("."))
+            while (key.Contains('.', StringComparison.InvariantCulture))
             {
                 var envName = key.Substring(0, key.IndexOf(".", StringComparison.InvariantCulture));
                 key = key.Substring(key.IndexOf(".", StringComparison.InvariantCulture) + 1);
@@ -227,18 +230,21 @@ namespace QuantConnect.Configuration
         public static T GetValue<T>(string key, T defaultValue = default(T))
         {
             // special case environment requests
-            if (key == "environment" && typeof (T) == typeof (string)) return (T) (object) GetEnvironment();
+            if (key == "environment" && typeof(T) == typeof(string)) return (T)(object)GetEnvironment();
 
             var token = GetToken(Settings.Value, key);
             if (token == null)
             {
                 var defaultValueString = defaultValue is IConvertible
-                    ? ((IConvertible) defaultValue).ToString(CultureInfo.InvariantCulture)
+                    ? ((IConvertible)defaultValue).ToString(CultureInfo.InvariantCulture)
                     : defaultValue is IFormattable
-                        ? ((IFormattable) defaultValue).ToString(null, CultureInfo.InvariantCulture)
+                        ? ((IFormattable)defaultValue).ToString(null, CultureInfo.InvariantCulture)
                         : Invariant($"{defaultValue}");
 
-                Log.Trace(Invariant($"Config.GetValue(): {key} - Using default value: {defaultValueString}"));
+                if (Log.DebuggingEnabled)
+                {
+                    Log.Debug(Invariant($"Config.GetValue(): {key} - Using default value: {defaultValueString}"));
+                }
                 return defaultValue;
             }
 
@@ -255,22 +261,22 @@ namespace QuantConnect.Configuration
 
             if (type.IsEnum)
             {
-                return (T) Enum.Parse(type, value, true);
+                return (T)Enum.Parse(type, value, true);
             }
 
             if (typeof(IConvertible).IsAssignableFrom(type))
             {
-                return (T) Convert.ChangeType(value, type, CultureInfo.InvariantCulture);
+                return (T)Convert.ChangeType(value, type, CultureInfo.InvariantCulture);
             }
 
             // try and find a static parse method
             try
             {
-                var parse = type.GetMethod("Parse", new[]{typeof(string)});
+                var parse = type.GetMethod("Parse", new[] { typeof(string) });
                 if (parse != null)
                 {
-                    var result = parse.Invoke(null, new object[] {value});
-                    return (T) result;
+                    var result = parse.Invoke(null, new object[] { value });
+                    return (T)result;
                 }
             }
             catch (Exception err)
@@ -298,8 +304,8 @@ namespace QuantConnect.Configuration
         /// </summary>
         /// <typeparam name="T">The desired output type</typeparam>
         /// <param name="key">The configuration key</param>
-        /// <param name="value">The output value</param>
-        /// <returns>True on successful parse, false when output value is default(T)</returns>
+        /// <param name="value">The output value. If the key is found and parsed successfully, it will be the parsed value, else default(T).</param>
+        /// <returns>True on successful parse or if they key is not found. False only when key is found but fails to parse.</returns>
         public static bool TryGetValue<T>(string key, out T value)
         {
             return TryGetValue(key, default(T), out value);
@@ -312,8 +318,8 @@ namespace QuantConnect.Configuration
         /// <typeparam name="T">The desired output type</typeparam>
         /// <param name="key">The configuration key</param>
         /// <param name="defaultValue">The default value to use on key not found or unsuccessful parse</param>
-        /// <param name="value">The output value</param>
-        /// <returns>True on successful parse, false when output value is defaultValue</returns>
+        /// <param name="value">The output value. If the key is found and parsed successfully, it will be the parsed value, else defaultValue.</param>
+        /// <returns>True on successful parse or if they key is not found and using defaultValue. False only when key is found but fails to parse.</returns>
         public static bool TryGetValue<T>(string key, T defaultValue, out T value)
         {
             try
@@ -331,11 +337,17 @@ namespace QuantConnect.Configuration
         /// <summary>
         /// Write the contents of the serialized configuration back to the disk.
         /// </summary>
-        public static void Write()
+        public static void Write(string targetPath = null)
         {
             if (!Settings.IsValueCreated) return;
             var serialized = JsonConvert.SerializeObject(Settings.Value, Formatting.Indented);
-            File.WriteAllText(ConfigurationFileName, serialized);
+
+            var taget = ConfigurationFileName;
+            if (!string.IsNullOrEmpty(targetPath))
+            {
+                taget = Path.Combine(targetPath, ConfigurationFileName);
+            }
+            File.WriteAllText(taget, serialized);
         }
 
         /// <summary>
@@ -375,7 +387,7 @@ namespace QuantConnect.Configuration
                     var environments = config["environments"];
                     if (!(environments is JObject)) continue;
 
-                    var settings = ((JObject) environments).SelectToken(env);
+                    var settings = ((JObject)environments).SelectToken(env);
                     if (settings == null) continue;
 
                     // copy values for the selected environment to the root
@@ -389,7 +401,7 @@ namespace QuantConnect.Configuration
                         var jProperty = clone.Property(path);
                         if (jProperty != null) jProperty.Remove();
 
-                        var value = (token is JProperty ? ((JProperty) token).Value : token).ToString();
+                        var value = (token is JProperty ? ((JProperty)token).Value : token).ToString();
                         clone.Add(path, value);
                     }
                 }

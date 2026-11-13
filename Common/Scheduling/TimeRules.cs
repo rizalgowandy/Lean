@@ -15,10 +15,11 @@
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using NodaTime;
+using System.Linq;
+using QuantConnect.Interfaces;
 using QuantConnect.Securities;
+using System.Collections.Generic;
 using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Scheduling
@@ -26,21 +27,18 @@ namespace QuantConnect.Scheduling
     /// <summary>
     /// Helper class used to provide better syntax when defining time rules
     /// </summary>
-    public class TimeRules
+    public class TimeRules : BaseScheduleRules
     {
-        private DateTimeZone _timeZone;
-
-        private readonly SecurityManager _securities;
-
         /// <summary>
         /// Initializes a new instance of the <see cref="TimeRules"/> helper class
         /// </summary>
+        /// <param name="algorithm">The algorithm instance</param>
         /// <param name="securities">The security manager</param>
         /// <param name="timeZone">The algorithm's default time zone</param>
-        public TimeRules(SecurityManager securities, DateTimeZone timeZone)
+        /// <param name="marketHoursDatabase">The market hours database instance to use</param>
+        public TimeRules(IAlgorithm algorithm, SecurityManager securities, DateTimeZone timeZone, MarketHoursDatabase marketHoursDatabase)
+            : base(algorithm, securities, timeZone, marketHoursDatabase)
         {
-            _securities = securities;
-            _timeZone = timeZone;
         }
 
         /// <summary>
@@ -49,23 +47,32 @@ namespace QuantConnect.Scheduling
         /// <param name="timeZone">The time zone to use for helper methods that can't resolve a time zone</param>
         public void SetDefaultTimeZone(DateTimeZone timeZone)
         {
-            _timeZone = timeZone;
+            TimeZone = timeZone;
         }
 
         /// <summary>
         /// Specifies an event should fire at the current time
         /// </summary>
-        public ITimeRule Now => new FuncTimeRule("Now", dates => dates.Select(date => date.Add(_securities.UtcTime.TimeOfDay)));
+        public ITimeRule Now => new FuncTimeRule("Now", dates => {
+            return dates.Select(date =>
+            {
+                // we ignore the given date and just use the current time, why? if the algorithm used 'DateRules.Today'
+                // we get the algorithms first 'Date', which during warmup might not be a complete date, depending on the warmup period
+                // and since Today returns dates we might get a time in the past which get's ignored. See 'WarmupTrainRegressionAlgorithm'
+                // which reproduces GH issue #6410
+                return Securities.UtcTime;
+            });
+        });
 
         /// <summary>
         /// Convenience property for running a scheduled event at midnight in the algorithm time zone
         /// </summary>
-        public ITimeRule Midnight => new FuncTimeRule("Midnight", dates => dates.Select(date => date.ConvertToUtc(_timeZone)));
+        public ITimeRule Midnight => new FuncTimeRule("Midnight", dates => dates.Select(date => date.ConvertToUtc(TimeZone)));
 
         /// <summary>
         /// Convenience property for running a scheduled event at noon in the algorithm time zone
         /// </summary>
-        public ITimeRule Noon => new FuncTimeRule("Noon", dates => dates.Select(date => date.ConvertToUtc(_timeZone).AddHours(12)));
+        public ITimeRule Noon => new FuncTimeRule("Noon", dates => dates.Select(date => date.ConvertToUtc(TimeZone).AddHours(12)));
 
         /// <summary>
         /// Specifies an event should fire at the specified time of day in the algorithm's time zone
@@ -74,7 +81,7 @@ namespace QuantConnect.Scheduling
         /// <returns>A time rule that fires at the specified time in the algorithm's time zone</returns>
         public ITimeRule At(TimeSpan timeOfDay)
         {
-            return At(timeOfDay, _timeZone);
+            return At(timeOfDay, TimeZone);
         }
 
         /// <summary>
@@ -86,7 +93,7 @@ namespace QuantConnect.Scheduling
         /// <returns>A time rule that fires at the specified time in the algorithm's time zone</returns>
         public ITimeRule At(int hour, int minute, int second = 0)
         {
-            return At(new TimeSpan(hour, minute, second), _timeZone);
+            return At(new TimeSpan(hour, minute, second), TimeZone);
         }
 
         /// <summary>
@@ -144,9 +151,100 @@ namespace QuantConnect.Scheduling
                 throw new ArgumentException("TimeRules.Every(): time span interval can not be zero or less");
             }
             var name = Invariant($"Every {interval.TotalMinutes:0.##} min");
-            Func<IEnumerable<DateTime>, IEnumerable<DateTime>> applicator = dates => EveryIntervalIterator(dates, interval, _timeZone);
+            Func<IEnumerable<DateTime>, IEnumerable<DateTime>> applicator = dates => EveryIntervalIterator(dates, interval, TimeZone);
             return new FuncTimeRule(name, applicator);
         }
+
+        /// <summary>
+        /// Specifies an event should fire at market open +- <paramref name="minutesBeforeOpen"/>.
+        /// Picks, per date, the earliest market open across the algorithm's securities, ignoring always-open
+        /// exchanges. Defaults to US equities (SPY) when no eligible security is subscribed.
+        /// </summary>
+        /// <param name="minutesBeforeOpen">The minutes before market open that the event should fire</param>
+        /// <param name="extendedMarketOpen">True to use extended market open, false to use regular market open</param>
+        /// <returns>A time rule that fires the specified number of minutes before the earliest market open</returns>
+        public ITimeRule BeforeMarketOpen(double minutesBeforeOpen = 0, bool extendedMarketOpen = false)
+        {
+            return AfterMarketOpen(minutesBeforeOpen * (-1), extendedMarketOpen);
+        }
+
+        /// <summary>
+        /// Specifies an event should fire at market open +- <paramref name="minutesBeforeOpen"/>
+        /// </summary>
+        /// <param name="symbol">The symbol whose market open we want an event for</param>
+        /// <param name="minutesBeforeOpen">The minutes before market open that the event should fire</param>
+        /// <param name="extendedMarketOpen">True to use extended market open, false to use regular market open</param>
+        /// <returns>A time rule that fires the specified number of minutes before the symbol's market open</returns>
+        public ITimeRule BeforeMarketOpen(string symbol, double minutesBeforeOpen = 0, bool extendedMarketOpen = false) => BeforeMarketOpen(GetSymbol(symbol), minutesBeforeOpen, extendedMarketOpen);
+
+        /// <summary>
+        /// Specifies an event should fire at market open +- <paramref name="minutesBeforeOpen"/>
+        /// </summary>
+        /// <param name="symbol">The symbol whose market open we want an event for</param>
+        /// <param name="minutesBeforeOpen">The minutes before market open that the event should fire</param>
+        /// <param name="extendedMarketOpen">True to use extended market open, false to use regular market open</param>
+        /// <returns>A time rule that fires the specified number of minutes before the symbol's market open</returns>
+        public ITimeRule BeforeMarketOpen(Symbol symbol, double minutesBeforeOpen = 0, bool extendedMarketOpen = false)
+        {
+            return AfterMarketOpen(symbol, minutesBeforeOpen * (-1), extendedMarketOpen);
+        }
+
+        /// <summary>
+        /// Specifies an event should fire at market open +- <paramref name="minutesAfterOpen"/>.
+        /// Picks, per date, the earliest market open across the algorithm's securities, ignoring always-open
+        /// exchanges. Defaults to US equities (SPY) when no eligible security is subscribed.
+        /// </summary>
+        /// <param name="minutesAfterOpen">The minutes after market open that the event should fire</param>
+        /// <param name="extendedMarketOpen">True to use extended market open, false to use regular market open</param>
+        /// <returns>A time rule that fires the specified number of minutes after the earliest market open</returns>
+        public ITimeRule AfterMarketOpen(double minutesAfterOpen = 0, bool extendedMarketOpen = false)
+        {
+            var type = extendedMarketOpen ? "ExtendedMarketOpen" : "MarketOpen";
+            var afterOrBefore = minutesAfterOpen > 0 ? "after" : "before";
+            var name = Invariant($"{Math.Abs(minutesAfterOpen):0.##} min {afterOrBefore} {type}");
+            var timeAfterOpen = TimeSpan.FromMinutes(minutesAfterOpen);
+
+            return new FuncTimeRule(name, dates => EarliestMarketOpenTimes(dates, extendedMarketOpen, timeAfterOpen));
+        }
+
+        private IEnumerable<DateTime> EarliestMarketOpenTimes(IEnumerable<DateTime> dates, bool extendedMarketOpen, TimeSpan timeAfterOpen)
+        {
+            var exchangeHoursList = GetMarketOpenCloseExchangeHours();
+            foreach (var date in dates)
+            {
+                var earliestUtc = default(DateTime);
+                foreach (var exchangeHours in exchangeHoursList)
+                {
+                    if (!exchangeHours.IsDateOpen(date, extendedMarketOpen))
+                    {
+                        continue;
+                    }
+                    var marketOpen = exchangeHours.GetFirstDailyMarketOpen((date + Time.OneDay).AddTicks(-1), extendedMarketOpen);
+                    if (marketOpen.Date != date.Date)
+                    {
+                        continue;
+                    }
+                    var utc = (marketOpen + timeAfterOpen).ConvertToUtc(exchangeHours.TimeZone);
+                    if (earliestUtc == default || utc < earliestUtc)
+                    {
+                        earliestUtc = utc;
+                    }
+                }
+                if (earliestUtc != default)
+                {
+                    yield return earliestUtc;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Specifies an event should fire at market open +- <paramref name="minutesAfterOpen"/>
+        /// </summary>
+        /// <param name="symbol">The symbol whose market open we want an event for</param>
+        /// <param name="minutesAfterOpen">The minutes after market open that the event should fire</param>
+        /// <param name="extendedMarketOpen">True to use extended market open, false to use regular market open</param>
+        /// <returns>A time rule that fires the specified number of minutes after the symbol's market open</returns>
+        public ITimeRule AfterMarketOpen(string symbol, double minutesAfterOpen = 0, bool extendedMarketOpen = false) => AfterMarketOpen(GetSymbol(symbol), minutesAfterOpen, extendedMarketOpen);
 
         /// <summary>
         /// Specifies an event should fire at market open +- <paramref name="minutesAfterOpen"/>
@@ -157,22 +255,110 @@ namespace QuantConnect.Scheduling
         /// <returns>A time rule that fires the specified number of minutes after the symbol's market open</returns>
         public ITimeRule AfterMarketOpen(Symbol symbol, double minutesAfterOpen = 0, bool extendedMarketOpen = false)
         {
-            var security = GetSecurity(symbol);
-
             var type = extendedMarketOpen ? "ExtendedMarketOpen" : "MarketOpen";
-            var name = Invariant($"{symbol}: {minutesAfterOpen:0.##} min after {type}");
+            var afterOrBefore = minutesAfterOpen > 0 ? "after" : "before";
+            var name = Invariant($"{symbol}: {Math.Abs(minutesAfterOpen):0.##} min {afterOrBefore} {type}");
+            var exchangeHours = GetSecurityExchangeHours(symbol);
 
             var timeAfterOpen = TimeSpan.FromMinutes(minutesAfterOpen);
             Func<IEnumerable<DateTime>, IEnumerable<DateTime>> applicator = dates =>
                 from date in dates
-                where security.Exchange.DateIsOpen(date)
-                let marketOpen = security.Exchange.Hours.GetNextMarketOpen(date, extendedMarketOpen)
+                let marketOpen = exchangeHours.GetFirstDailyMarketOpen((date + Time.OneDay).AddTicks(-1), extendedMarketOpen)
+                // make sure the market open is of this date
+                where exchangeHours.IsDateOpen(date, extendedMarketOpen) && marketOpen.Date == date.Date
                 let localEventTime = marketOpen + timeAfterOpen
-                let utcEventTime = localEventTime.ConvertToUtc(security.Exchange.TimeZone)
+                let utcEventTime = localEventTime.ConvertToUtc(exchangeHours.TimeZone)
                 select utcEventTime;
 
             return new FuncTimeRule(name, applicator);
         }
+
+        /// <summary>
+        /// Specifies an event should fire at the market close +- <paramref name="minutesAfterClose"/>.
+        /// Picks, per date, the latest market close across the algorithm's securities, ignoring always-open
+        /// exchanges. Defaults to US equities (SPY) when no eligible security is subscribed.
+        /// </summary>
+        /// <param name="minutesAfterClose">The time after market close that the event should fire</param>
+        /// <param name="extendedMarketClose">True to use extended market close, false to use regular market close</param>
+        /// <returns>A time rule that fires the specified number of minutes after the latest market close</returns>
+        public ITimeRule AfterMarketClose(double minutesAfterClose = 0, bool extendedMarketClose = false)
+        {
+            return BeforeMarketClose(minutesAfterClose * (-1), extendedMarketClose);
+        }
+
+        /// <summary>
+        /// Specifies an event should fire at the market close +- <paramref name="minutesAfterClose"/>
+        /// </summary>
+        /// <param name="symbol">The symbol whose market close we want an event for</param>
+        /// <param name="minutesAfterClose">The time after market close that the event should fire</param>
+        /// <param name="extendedMarketClose">True to use extended market close, false to use regular market close</param>
+        /// <returns>A time rule that fires the specified number of minutes after the symbol's market close</returns>
+        public ITimeRule AfterMarketClose(string symbol, double minutesAfterClose = 0, bool extendedMarketClose = false) => AfterMarketClose(GetSymbol(symbol), minutesAfterClose, extendedMarketClose);
+
+        /// <summary>
+        /// Specifies an event should fire at the market close +- <paramref name="minutesAfterClose"/>
+        /// </summary>
+        /// <param name="symbol">The symbol whose market close we want an event for</param>
+        /// <param name="minutesAfterClose">The time after market close that the event should fire</param>
+        /// <param name="extendedMarketClose">True to use extended market close, false to use regular market close</param>
+        /// <returns>A time rule that fires the specified number of minutes after the symbol's market close</returns>
+        public ITimeRule AfterMarketClose(Symbol symbol, double minutesAfterClose = 0, bool extendedMarketClose = false)
+        {
+            return BeforeMarketClose(symbol, minutesAfterClose * (-1), extendedMarketClose);
+        }
+
+        /// <summary>
+        /// Specifies an event should fire at the market close +- <paramref name="minutesBeforeClose"/>.
+        /// Picks, per date, the latest market close across the algorithm's securities, ignoring always-open
+        /// exchanges. Defaults to US equities (SPY) when no eligible security is subscribed.
+        /// </summary>
+        /// <param name="minutesBeforeClose">The time before market close that the event should fire</param>
+        /// <param name="extendedMarketClose">True to use extended market close, false to use regular market close</param>
+        /// <returns>A time rule that fires the specified number of minutes before the latest market close</returns>
+        public ITimeRule BeforeMarketClose(double minutesBeforeClose = 0, bool extendedMarketClose = false)
+        {
+            var type = extendedMarketClose ? "ExtendedMarketClose" : "MarketClose";
+            var afterOrBefore = minutesBeforeClose > 0 ? "before" : "after";
+            var name = Invariant($"{Math.Abs(minutesBeforeClose):0.##} min {afterOrBefore} {type}");
+            var timeBeforeClose = TimeSpan.FromMinutes(minutesBeforeClose);
+
+            return new FuncTimeRule(name, dates => LatestMarketCloseTimes(dates, extendedMarketClose, timeBeforeClose));
+        }
+
+        private IEnumerable<DateTime> LatestMarketCloseTimes(IEnumerable<DateTime> dates, bool extendedMarketClose, TimeSpan timeBeforeClose)
+        {
+            var exchangeHoursList = GetMarketOpenCloseExchangeHours();
+            foreach (var date in dates)
+            {
+                var latestUtc = default(DateTime);
+                foreach (var exchangeHours in exchangeHoursList)
+                {
+                    if (!exchangeHours.IsDateOpen(date, extendedMarketClose))
+                    {
+                        continue;
+                    }
+                    var marketClose = exchangeHours.GetLastDailyMarketClose(date, extendedMarketClose);
+                    var utc = (marketClose - timeBeforeClose).ConvertToUtc(exchangeHours.TimeZone);
+                    if (utc > latestUtc)
+                    {
+                        latestUtc = utc;
+                    }
+                }
+                if (latestUtc != default)
+                {
+                    yield return latestUtc;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Specifies an event should fire at the market close +- <paramref name="minutesBeforeClose"/>
+        /// </summary>
+        /// <param name="symbol">The symbol whose market close we want an event for</param>
+        /// <param name="minutesBeforeClose">The time before market close that the event should fire</param>
+        /// <param name="extendedMarketClose">True to use extended market close, false to use regular market close</param>
+        /// <returns>A time rule that fires the specified number of minutes before the symbol's market close</returns>
+        public ITimeRule BeforeMarketClose(string symbol, double minutesBeforeClose = 0, bool extendedMarketClose = false) => BeforeMarketClose(GetSymbol(symbol), minutesBeforeClose, extendedMarketClose);
 
         /// <summary>
         /// Specifies an event should fire at the market close +- <paramref name="minutesBeforeClose"/>
@@ -183,31 +369,22 @@ namespace QuantConnect.Scheduling
         /// <returns>A time rule that fires the specified number of minutes before the symbol's market close</returns>
         public ITimeRule BeforeMarketClose(Symbol symbol, double minutesBeforeClose = 0, bool extendedMarketClose = false)
         {
-            var security = GetSecurity(symbol);
-
             var type = extendedMarketClose ? "ExtendedMarketClose" : "MarketClose";
-            var name = Invariant($"{security.Symbol}: {minutesBeforeClose:0.##} min before {type}");
+            var afterOrBefore = minutesBeforeClose > 0 ? "before" : "after";
+            var name = Invariant($"{symbol}: {Math.Abs(minutesBeforeClose):0.##} min {afterOrBefore} {type}");
+            var exchangeHours = GetSecurityExchangeHours(symbol);
 
             var timeBeforeClose = TimeSpan.FromMinutes(minutesBeforeClose);
             Func<IEnumerable<DateTime>, IEnumerable<DateTime>> applicator = dates =>
                 from date in dates
-                where security.Exchange.DateIsOpen(date)
-                let marketClose = security.Exchange.Hours.GetNextMarketClose(date, extendedMarketClose)
+                let marketClose = exchangeHours.GetLastDailyMarketClose(date, extendedMarketClose)
+                // make sure the market open is of this date
+                where exchangeHours.IsDateOpen(date, extendedMarketClose)
                 let localEventTime = marketClose - timeBeforeClose
-                let utcEventTime = localEventTime.ConvertToUtc(security.Exchange.TimeZone)
+                let utcEventTime = localEventTime.ConvertToUtc(exchangeHours.TimeZone)
                 select utcEventTime;
 
             return new FuncTimeRule(name, applicator);
-        }
-
-        private Security GetSecurity(Symbol symbol)
-        {
-            Security security;
-            if (!_securities.TryGetValue(symbol, out security))
-            {
-                throw new KeyNotFoundException($"{symbol} not found in portfolio. Request this data when initializing the algorithm.");
-            }
-            return security;
         }
 
         /// <summary>

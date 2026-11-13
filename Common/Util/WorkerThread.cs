@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -21,7 +21,7 @@ using QuantConnect.Logging;
 namespace QuantConnect.Util
 {
     /// <summary>
-    /// This worker tread is required to guarantee all python operations are
+    /// This worker thread is required to guarantee all python operations are
     /// executed by the same thread, to enable complete debugging functionality.
     /// We don't use the main thread, to avoid any chance of blocking the process
     /// </summary>
@@ -95,13 +95,13 @@ namespace QuantConnect.Util
         /// </summary>
         /// <remarks>Note that the worker thread is a background thread,
         /// so it won't block the process from terminating even if not disposed</remarks>
-        public void Dispose()
+        public virtual void Dispose()
         {
             try
             {
                 _blockingCollection.CompleteAdding();
-                _threadCancellationTokenSource.Cancel();
-                _workerThread.Join(50);
+                _workerThread.StopSafely(TimeSpan.FromMilliseconds(50), _threadCancellationTokenSource);
+                _threadCancellationTokenSource.DisposeSafely();
             }
             catch (Exception exception)
             {

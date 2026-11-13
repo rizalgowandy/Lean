@@ -52,7 +52,7 @@ namespace QuantConnect.Algorithm.Framework
         /// </summary>
         /// <param name="dictionary">The securities collection to be updated with the changes</param>
         /// <param name="changes">The changes to be applied to the securities collection</param>
-        /// <param name="valueFactory">Factory for creating dictonary values for a key</param>
+        /// <param name="valueFactory">Factory for creating dictionary values for a key</param>
         public static void UpdateDictionary<TValue>(
             IDictionary<Security, TValue> dictionary,
             SecurityChanges changes,
@@ -67,7 +67,7 @@ namespace QuantConnect.Algorithm.Framework
         /// </summary>
         /// <param name="dictionary">The securities collection to be updated with the changes</param>
         /// <param name="changes">The changes to be applied to the securities collection</param>
-        /// <param name="valueFactory">Factory for creating dictonary values for a key</param>
+        /// <param name="valueFactory">Factory for creating dictionary values for a key</param>
         public static void UpdateDictionary<TValue>(
             IDictionary<Symbol, TValue> dictionary,
             SecurityChanges changes,
@@ -109,7 +109,6 @@ namespace QuantConnect.Algorithm.Framework
 
         /// <summary>
         /// Invokes the provided <paramref name="add"/> and <paramref name="remove"/> functions for each
-        /// <seealso cref="SecurityChanges.Added"/> and <seealso cref="SecurityChanges.Removed"/>, respectively
         /// </summary>
         /// <param name="changes">The security changes to process</param>
         /// <param name="add">Function called for each added security</param>

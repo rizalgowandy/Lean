@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -16,7 +16,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using QuantConnect.Brokerages.Backtesting;
 using QuantConnect.Interfaces;
 using QuantConnect.Packets;
@@ -31,6 +30,11 @@ namespace QuantConnect.Brokerages.Paper
     {
         private DateTime _lastScanTime;
         private readonly LiveNodePacket _job;
+
+        /// <summary>
+        /// Enables or disables concurrent processing of messages to and from the brokerage.
+        /// </summary>
+        public override bool ConcurrencyEnabled { get; set; } = true;
 
         /// <summary>
         /// Creates a new PaperBrokerage
@@ -49,16 +53,16 @@ namespace QuantConnect.Brokerages.Paper
         /// <returns>The current cash balance for each currency available for trading</returns>
         public override List<CashAmount> GetCashBalance()
         {
-            string value;
-            if (_job.BrokerageData.TryGetValue("project-paper-equity", out value))
-            {
-                // remove the key, we really only want to return the cached value on the first request
-                _job.BrokerageData.Remove("project-paper-equity");
-                return new List<CashAmount> {new CashAmount(Parse.Decimal(value), Algorithm.AccountCurrency)};
-            }
+            return GetCashBalance(_job.BrokerageData, Algorithm.Portfolio.CashBook);
+        }
 
-            // if we've already begun running, just return the current state
-            return Algorithm.Portfolio.CashBook.Select(x => new CashAmount(x.Value.Amount, x.Value.Symbol)).ToList();
+        /// <summary>
+        /// Gets all holdings for the account
+        /// </summary>
+        /// <returns>The current holdings from the account</returns>
+        public override List<Holding> GetAccountHoldings()
+        {
+            return base.GetAccountHoldings(_job.BrokerageData, Algorithm.Securities.Values);
         }
 
         /// <summary>
@@ -75,14 +79,17 @@ namespace QuantConnect.Brokerages.Paper
 
                 // apply each dividend directly to the quote cash holdings of the security
                 // this assumes dividends are paid out in a security's quote cash (reasonable assumption)
-                foreach (var dividend in Algorithm.CurrentSlice.Dividends.Values)
+                if (!Algorithm.IsWarmingUp)
                 {
-                    Security security;
-                    if (Algorithm.Securities.TryGetValue(dividend.Symbol, out security))
+                    foreach (var dividend in Algorithm.CurrentSlice.Dividends.Values)
                     {
-                        // compute the total distribution and apply as security's quote currency
-                        var distribution = security.Holdings.Quantity * dividend.Distribution;
-                        security.QuoteCurrency.AddAmount(distribution);
+                        Security security;
+                        if (Algorithm.Securities.TryGetValue(dividend.Symbol, out security))
+                        {
+                            // compute the total distribution and apply as security's quote currency
+                            var distribution = security.Holdings.Quantity * dividend.Distribution;
+                            security.QuoteCurrency.AddAmount(distribution);
+                        }
                     }
                 }
             }

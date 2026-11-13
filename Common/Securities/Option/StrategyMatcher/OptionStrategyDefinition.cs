@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -73,20 +73,7 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
         /// </summary>
         public OptionStrategy CreateStrategy(IReadOnlyList<OptionStrategyLegDefinitionMatch> legs)
         {
-            var underlying = legs[0].Position.Symbol;
-            if (underlying.HasUnderlying)
-            {
-                underlying = underlying.Underlying;
-            }
-
-            var strategy = new OptionStrategy {Name = Name, Underlying = underlying};
-            for (int i = 0; i < Math.Min(Legs.Count, legs.Count); i++)
-            {
-                var leg = Legs[i].CreateLegData(legs[i]);
-                leg.Invoke(strategy.UnderlyingLegs.Add, strategy.OptionLegs.Add);
-            }
-
-            return strategy;
+            return OptionStrategy.Create(Name, Enumerable.Range(0, Math.Min(Legs.Count, legs.Count)).Select(i => Legs[i].CreateLegData(legs[i])));
         }
 
         /// <summary>
@@ -197,62 +184,6 @@ namespace QuantConnect.Securities.Option.StrategyMatcher
                 // could include partial matches, would allow an algorithm to determine if adding a
                 // new position could help reduce overall margin exposure by completing a strategy
             }
-        }
-
-        /// <summary>
-        /// Attempts to exactly match the specified positions to this strategy definition with as much quantity as possible.
-        /// </summary>
-        public bool TryMatch(IReadOnlyList<OptionPosition> positions, out OptionStrategy strategy)
-        {
-            if (positions.Count == 0 || Legs.Count != positions.Count)
-            {
-                strategy = null;
-                return false;
-            }
-
-            var underlying = positions[0].Symbol;
-            if (underlying.SecurityType == SecurityType.Option)
-            {
-                underlying = underlying.Underlying;
-            }
-
-            var quantityMultiplier = int.MaxValue;
-            var matches = new List<OptionStrategy.LegData>();
-            for (int i = 0; i < Legs.Count; i++)
-            {
-                var leg = Legs[i];
-                var position = positions[i];
-                OptionStrategy.LegData match;
-                if (!leg.TryMatch(position, out match))
-                {
-                    strategy = null;
-                    return false;
-                }
-
-                matches.Add(match);
-                var multiple = match.Quantity / leg.Quantity;
-                quantityMultiplier = Math.Min(multiple, quantityMultiplier);
-            }
-
-            // separate matches into option/underlying legs and resize according to smallest quantity multipler
-            var optionLegs = new List<OptionStrategy.OptionLegData>();
-            var underlyingLegs = new List<OptionStrategy.UnderlyingLegData>();
-            for (var i = 0; i < matches.Count; i++)
-            {
-                var match = matches[i];
-                match.Invoke(underlyingLegs.Add, optionLegs.Add);
-                match.Quantity = Legs[i].Quantity * quantityMultiplier;
-            }
-
-            strategy = new OptionStrategy
-            {
-                Name = Name,
-                OptionLegs = optionLegs,
-                Underlying =  underlying,
-                UnderlyingLegs = underlyingLegs
-            };
-
-            return true;
         }
 
         /// <summary>Returns a string that represents the current object.</summary>

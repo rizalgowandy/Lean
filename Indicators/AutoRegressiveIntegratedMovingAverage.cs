@@ -23,7 +23,7 @@ using MathNet.Numerics.LinearRegression;
 namespace QuantConnect.Indicators
 {
     /// <summary>
-    /// An Autoregressive Intergrated Moving Average (ARIMA) is a time series model which can be used to describe a set of data.
+    /// An Autoregressive Integrated Moving Average (ARIMA) is a time series model which can be used to describe a set of data.
     /// In particular,with Xₜ representing the series, the model assumes the data are of form
     /// (after differencing <see cref="_diffOrder" /> times):
     /// <para>
@@ -35,6 +35,8 @@ namespace QuantConnect.Indicators
     {
         private List<double> _residuals;
         private readonly bool _intercept;
+        private bool _loggedOnceInMovingAverageStep;
+        private bool _loggedOnceInAutoRegressiveStep;
         private readonly RollingWindow<double> _rollingData;
 
         /// <summary>
@@ -54,19 +56,25 @@ namespace QuantConnect.Indicators
         private readonly int _maOrder;
 
         /// <summary>
+        /// Whether or not to handle potential exceptions, returning a zero value. I.e, the values
+        /// provided as input are not valid by the Normal Equations direct regression method
+        /// </summary>
+        public bool HandleExceptions { get; set; } = true;
+
+        /// <summary>
         /// Fitted AR parameters (φ terms).
         /// </summary>
-        public double[] ArParameters;
+        public double[] ArParameters { get; private set; }
 
         /// <summary>
         /// Fitted MA parameters (θ terms).
         /// </summary>
-        public double[] MaParameters;
+        public double[] MaParameters { get; private set; }
 
         /// <summary>
         /// Fitted intercept (c term).
         /// </summary>
-        public double Intercept;
+        public double Intercept { get; private set; }
 
         /// <summary>
         /// Gets a flag indicating when this indicator is ready and fully initialized
@@ -101,7 +109,7 @@ namespace QuantConnect.Indicators
         /// <param name="diffOrder">Difference order (d) -- defines how many times to difference the model before fitting parameters.</param>
         /// <param name="maOrder">MA order -- defines the number of past values to consider in the MA component of the model.</param>
         /// <param name="period">Size of the rolling series to fit onto</param>
-        /// <param name="intercept">Whether ot not to include the intercept term</param>
+        /// <param name="intercept">Whether or not to include the intercept term</param>
         public AutoRegressiveIntegratedMovingAverage(
             string name,
             int arOrder,
@@ -123,9 +131,14 @@ namespace QuantConnect.Indicators
                     "currently available fitting methods.");
             }
 
-            if (period < Math.Max(arOrder, maOrder))
+            // ComputeNextValue indexes arrayData and _residuals up to 2 * maOrder, over a
+            // series DifferenceSeries shortens only when diffOrder is positive.
+            var shortest = Math.Max(arOrder, maOrder > 0 ? (2 * maOrder) + 1 : 0)
+                + Math.Max(diffOrder, 0);
+            if (period < shortest)
             {
-                throw new ArgumentException("Period must exceed both arOrder and maOrder");
+                throw new ArgumentException($"Period parameter for ARIMA({arOrder}, {diffOrder}, " +
+                    $"{maOrder}) indicator must be at least {shortest} but was {period}");
             }
 
             _arOrder = arOrder;
@@ -181,7 +194,9 @@ namespace QuantConnect.Indicators
             if (_rollingData.IsReady)
             {
                 var arrayData = _rollingData.ToArray();
-                arrayData = _diffOrder > 0 ? DifferenceSeries(_diffOrder, arrayData, out _diffHeads) : arrayData;
+                double[] diffHeads = default;
+                arrayData = _diffOrder > 0 ? DifferenceSeries(_diffOrder, arrayData, out diffHeads) : arrayData;
+                _diffHeads = diffHeads;
                 TwoStepFit(arrayData);
                 double summants = 0;
                 if (_arOrder > 0)
@@ -252,21 +267,61 @@ namespace QuantConnect.Indicators
         {
             var appendedData = new List<double[]>();
             var laggedErrors = LaggedSeries(_maOrder, _residuals.ToArray());
-            for (var i = 0; i < laggedErrors.Length; i++)
+            // lags[i] is the AR row for time i + _arOrder and laggedErrors[j] the MA row for
+            // time j + _maOrder, so the two are only the same row when the orders match.
+            // Walking laggedErrors and indexing lags by the same counter ran off the end of
+            // lags whenever _arOrder > _maOrder, and paired rows from different times when
+            // it was the other way round.
+            var offset = Math.Max(_arOrder, _maOrder);
+            for (var t = offset; t < data.Length; t++)
             {
-                var doubles = lags[i].ToList();
-                doubles.AddRange(laggedErrors[i]);
+                var doubles = lags[t - _arOrder].ToList();
+                doubles.AddRange(laggedErrors[t - _maOrder]);
                 appendedData.Add(doubles.ToArray());
             }
 
-            var maFits = Fit.MultiDim(appendedData.ToArray(), data.Skip(_maOrder).ToArray(),
+            double[] maFits = default;
+            if (HandleExceptions)
+            {
+                try
+                {
+                    maFits = Fit.MultiDim(appendedData.ToArray(), data.Skip(offset).ToArray(),
                 method: DirectRegressionMethod.NormalEquations, intercept: _intercept);
-            for (var i = _maOrder; i < data.Length; i++) // Calculate the error assoc. with model.
+                }
+                catch (Exception ex)
+                {
+                    if (!_loggedOnceInMovingAverageStep)
+                    {
+                        Logging.Log.Error($"AutoRegressiveIntegratedMovingAverage.MovingAverageStep(): {ex.Message}");
+                        _loggedOnceInMovingAverageStep = true;
+                    }
+
+                    // The method Fit.MultiDim takes the appendedData array of mxn(m rows, n columns), computes its
+                    // transpose of size nxm, and then multiplies the tranpose with the original matrix, so the
+                    // resultant matrix is of size nxn. Then a linear system Ax=b is solved where A is the
+                    // aforementioned matrix and b is the data. Thus, the size of the response x is n
+                    //
+                    // It's worth saying that if intercept flag is set to true, the number of columns of the initial
+                    // matrix (appendedData) is increased in one. For more information, please see the implementation
+                    // of Fit.MultiDim() method (Ctrl + right click)
+                    // Each row is _arOrder AR lags followed by _maOrder lagged errors, which
+                    // is the width even when there are no rows at all to read it off.
+                    var size = _arOrder + _maOrder + (_intercept ? 1 : 0);
+                    maFits = new double[size];
+                }
+            }
+            else
+            {
+                maFits = Fit.MultiDim(appendedData.ToArray(), data.Skip(offset).ToArray(),
+                method: DirectRegressionMethod.NormalEquations, intercept: _intercept);
+            }
+
+            for (var i = offset; i < data.Length; i++) // Calculate the error assoc. with model.
             {
                 var paramVector = _intercept
                     ? Vector.Build.Dense(maFits.Skip(1).ToArray())
                     : Vector.Build.Dense(maFits);
-                var residual = data[i] - Vector.Build.Dense(appendedData[i - _maOrder]).DotProduct(paramVector);
+                var residual = data[i] - Vector.Build.Dense(appendedData[i - offset]).DotProduct(paramVector);
                 errorMa += Math.Pow(residual, 2);
             }
 
@@ -295,9 +350,41 @@ namespace QuantConnect.Indicators
         private void AutoRegressiveStep(double[][] lags, double[] data, double errorAr)
         {
             double[] arFits;
-            // The function (lags[time][lagged X]) |---> ΣᵢφᵢXₜ₋ᵢ 
-            arFits = Fit.MultiDim(lags, data.Skip(_arOrder).ToArray(),
-                method: DirectRegressionMethod.NormalEquations);
+            if (HandleExceptions)
+            {
+                try
+                {
+                    // The function (lags[time][lagged X]) |---> ΣᵢφᵢXₜ₋ᵢ
+                    arFits = Fit.MultiDim(lags, data.Skip(_arOrder).ToArray(),
+                        method: DirectRegressionMethod.NormalEquations);
+                }
+                catch (Exception ex)
+                {
+                    if (!_loggedOnceInAutoRegressiveStep)
+                    {
+                        Logging.Log.Error($"AutoRegressiveIntegratedMovingAverage.AutoRegressiveStep(): {ex.Message}");
+                        _loggedOnceInAutoRegressiveStep = true;
+                    }
+
+                    // The method Fit.MultiDim takes the lags array of mxn(m rows, n columns), computes its
+                    // transpose of size nxm, and then multiplies the tranpose with the original matrix, so the
+                    // resultant matrix is of size nxn. Then a linear system Ax=b is solved where A is the
+                    // aforementioned matrix and b is the data. Thus, the size of the response x is n
+                    //
+                    // For more information, please see the implementation of Fit.MultiDim() method (Ctrl + right click)
+                    // Each row holds _arOrder lags, and reading that width off row zero threw
+                    // when the fit had failed because there were no rows at all.
+                    var size = _arOrder;
+                    arFits = new double[size];
+                }
+            }
+            else
+            {
+                // The function (lags[time][lagged X]) |---> ΣᵢφᵢXₜ₋ᵢ
+                arFits = Fit.MultiDim(lags, data.Skip(_arOrder).ToArray(),
+                    method: DirectRegressionMethod.NormalEquations);
+            }
+
             var fittedVec = Vector.Build.Dense(arFits);
 
             for (var i = 0; i < data.Length; i++) // Calculate the error assoc. with model.
